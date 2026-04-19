@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server"
 import OpenAI from "openai"
 import { createClient } from "@/lib/supabase/server"
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+function getOpenAI() {
+  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+}
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
@@ -77,7 +79,7 @@ YOUR ROLE:
 - Keep responses short unless asked for detail
 - You can suggest the property manager trigger actions from the Tenants page`
 
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: "gpt-4o-mini",
     max_tokens: 1024,
     messages: [
