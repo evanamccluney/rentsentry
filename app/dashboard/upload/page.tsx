@@ -1,7 +1,7 @@
 "use client"
 import { useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
-import { parseCSV, detectColumns, mapRow, type MappedTenant } from "@/lib/csv-parser"
+import { parseCSV, detectColumns, detectHistoryColumns, isHistoricalCSV, aggregateHistoricalRows, mapRow, type MappedTenant } from "@/lib/csv-parser"
 import { scoreTenant } from "@/lib/risk-engine"
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
@@ -43,6 +43,8 @@ export default function UploadPage() {
   const [headers, setHeaders] = useState<string[]>([])
   const [rawRows, setRawRows] = useState<Record<string, string>[]>([])
   const [mapping, setMapping] = useState<Record<string, string | null>>({})
+  const [historyMapping, setHistoryMapping] = useState<Record<string, string | null>>({})
+  const [isHistorical, setIsHistorical] = useState(false)
   const [preview, setPreview] = useState<PreviewTenant[]>([])
   const [changeMap, setChangeMap] = useState<Map<string, ChangeInfo>>(new Map())
   const [importedCount, setImportedCount] = useState(0)
@@ -54,6 +56,8 @@ export default function UploadPage() {
       const { headers, rows } = parseCSV(text)
       if (!headers.length) { toast.error("Could not parse CSV. Check the file format."); return }
       const detected = detectColumns(headers)
+      const detectedHistory = detectHistoryColumns(headers)
+      const historical = isHistoricalCSV(rows, detected as Record<keyof MappedTenant, string | null>)
 
       // Auto-detect property name from first data row if column exists
       const propCol = detected.property_name
@@ -63,6 +67,8 @@ export default function UploadPage() {
       setHeaders(headers)
       setRawRows(rows)
       setMapping(detected as Record<string, string | null>)
+      setHistoryMapping(detectedHistory)
+      setIsHistorical(historical)
       setStep("mapping")
     }
     reader.readAsText(file)
@@ -133,8 +139,12 @@ export default function UploadPage() {
 
     setChangeMap(newChangeMap)
 
-    const mapped = rawRows.slice(0, 200).map(row => {
-      const tenant = mapRow(row, mapping as Record<string, string | null>)
+    // If historical CSV, aggregate rows per tenant — otherwise map one row per tenant
+    const tenants: MappedTenant[] = isHistorical
+      ? aggregateHistoricalRows(rawRows, mapping as Record<keyof MappedTenant, string | null>, historyMapping)
+      : rawRows.slice(0, 200).map(row => mapRow(row, mapping as Record<string, string | null>))
+
+    const mapped = tenants.map(tenant => {
       const { score, reasons } = scoreTenant(tenant)
       const unitKey = (tenant.unit ?? "").toLowerCase().trim()
       return { ...tenant, risk_score: score, risk_reasons: reasons, change: newChangeMap.get(unitKey) }
@@ -464,6 +474,16 @@ export default function UploadPage() {
       {/* Step 3: Preview */}
       {step === "preview" && (
         <div>
+          {/* Historical CSV banner */}
+          {isHistorical && (
+            <div className="mb-4 bg-blue-500/10 border border-blue-500/20 rounded-xl px-4 py-3 flex items-start gap-3">
+              <span className="text-blue-400 text-lg">📊</span>
+              <div>
+                <p className="text-blue-400 text-sm font-semibold">Historical data detected</p>
+                <p className="text-[#6b7280] text-xs mt-0.5">Multiple months of data found. RentSentry automatically calculated late payment count, average days late, and delinquency history from your full payment history — the AI advisor will use all of it.</p>
+              </div>
+            </div>
+          )}
           {/* Changes summary — only shown when comparing against a previous upload */}
           {changeMap.size > 0 && (() => {
             const paid      = preview.filter(t => t.change?.type === "paid")
