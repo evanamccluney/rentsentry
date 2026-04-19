@@ -305,7 +305,7 @@ export default async function DashboardPage() {
         <div className="bg-[#111827] border border-white/10 rounded-2xl p-5">
           <h2 className="text-white font-semibold text-sm mb-4">Recent Activity</h2>
           {!recentActivity || recentActivity.length === 0 ? (
-            <p className="text-[#4b5563] text-sm">No emails sent yet. Actions you take will appear here.</p>
+            <p className="text-[#4b5563] text-sm">No actions yet. SMS sent and notices generated will appear here.</p>
           ) : (
             <div className="space-y-3">
               {recentActivity.map((a: any) => (
