@@ -1,0 +1,21 @@
+Unit #,Resident Name,Email Address,Phone,Charge Amount,Lease Start,Lease Expiration,Payment Method,Balance Due,Last Payment Date,Late Payments,Average Days Late,Prior Delinquency,Move In Date
+101,LeBron James,lebron.james@gmail.com,(310) 555-0101,3800,09/01/2024,08/31/2026,ACH,0,04/01/2026,0,0,No,09/01/2024
+102,Stephen Curry,s.curry@gmail.com,(415) 555-0102,4200,06/01/2024,05/31/2026,ACH,0,04/01/2026,0,0,No,06/01/2024
+103,Erling Haaland,e.haaland@gmail.com,(212) 555-0103,3500,03/01/2025,02/28/2027,ACH,0,04/01/2026,4,5,No,03/01/2025
+104,Kevin Durant,kd35@gmail.com,(718) 555-0104,4000,07/01/2024,06/30/2026,Check,650,03/01/2026,1,2,No,07/01/2024
+105,Mohamed Salah,m.salah@gmail.com,(917) 555-0105,3200,01/01/2025,12/31/2026,Portal,1100,03/01/2026,3,4,No,01/01/2025
+106,Giannis Antetokounmpo,giannis34@gmail.com,(414) 555-0106,3900,04/01/2024,03/31/2026,ACH,0,04/01/2026,0,0,No,04/01/2024
+107,Harry Kane,h.kane@gmail.com,(213) 555-0107,3600,08/01/2024,07/31/2026,Check,600,02/01/2026,5,8,No,08/01/2024
+108,Luka Doncic,luka77@gmail.com,(469) 555-0108,3400,11/01/2024,10/31/2026,Unknown,0,04/01/2026,3,4,No,11/01/2024
+109,Kevin De Bruyne,kdb17@gmail.com,(312) 555-0109,4500,05/01/2024,04/30/2026,Portal,4500,03/01/2026,2,6,No,05/01/2024
+110,Jayson Tatum,j.tatum@gmail.com,(617) 555-0110,3700,02/01/2025,01/31/2027,ACH,0,04/01/2026,1,1,No,02/01/2025
+201,Marcus Rashford,m.rashford@gmail.com,(323) 555-0201,3300,10/01/2024,09/30/2026,Check,6600,02/01/2026,6,9,Yes,10/01/2024
+202,Joel Embiid,j.embiid@gmail.com,(215) 555-0202,4100,07/01/2024,06/30/2026,Portal,800,03/01/2026,1,2,No,07/01/2024
+203,Bukayo Saka,b.saka@gmail.com,(718) 555-0203,2900,12/01/2024,11/30/2026,ACH,0,04/01/2026,0,0,No,12/01/2024
+204,Nikola Jokic,n.jokic@gmail.com,(720) 555-0204,3600,03/01/2025,02/28/2027,Check,1800,03/01/2026,2,5,No,03/01/2025
+205,Phil Foden,p.foden@gmail.com,(212) 555-0205,3100,06/01/2024,05/31/2026,ACH,0,04/01/2026,4,6,No,06/01/2024
+206,Anthony Davis,a.davis@gmail.com,(310) 555-0206,4300,09/01/2024,08/31/2026,ACH,0,04/01/2026,0,0,No,09/01/2024
+207,Bruno Fernandes,b.fernandes@gmail.com,(617) 555-0207,3400,01/01/2025,12/31/2026,Check,750,02/01/2026,5,7,No,01/01/2025
+208,Damian Lillard,d.lillard@gmail.com,(503) 555-0208,3200,04/01/2024,03/31/2026,Portal,0,04/01/2026,2,3,No,04/01/2024
+209,Son Heung-min,son7@gmail.com,(646) 555-0209,3500,08/01/2024,07/31/2026,ACH,0,04/01/2026,1,1,No,08/01/2024
+210,Virgil van Dijk,v.vandijk@gmail.com,(415) 555-0210,3800,02/01/2025,01/31/2027,Check,3800,03/01/2026,3,5,Yes,02/01/2025

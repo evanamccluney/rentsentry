@@ -1,0 +1,11 @@
+property_name,unit,name,email,phone,rent_amount,lease_start,lease_end,payment_method,card_expiry,days_late_avg,late_payment_count,previous_delinquency,balance_due,last_payment_date,move_in_date,move_out_date
+Oakview Apartments,101,Marcus Johnson,marcus.johnson@gmail.com,+19194550101,950,2024-08-01,2026-07-31,ach,,1,0,no,0,2026-05-01,2024-08-01,
+Oakview Apartments,102,Kevin Durant,kdrealty22@gmail.com,+19194550102,650,2023-03-01,2026-02-28,check,,5,3,yes,650,2026-03-28,2023-03-01,
+Oakview Apartments,103,Sarah Mitchell,s.mitchell@outlook.com,+19194550103,875,2025-01-15,2026-01-14,card,08/26,2,1,no,875,2026-04-01,2025-01-15,
+Oakview Apartments,104,DeShawn Williams,deshawn.w@gmail.com,+19194550104,1100,2024-06-01,2026-05-31,ach,,0,0,no,0,2026-05-01,2024-06-01,
+Oakview Apartments,105,Jennifer Reyes,jreyes@yahoo.com,+19194550105,800,2022-11-01,2024-10-31,check,,8,4,yes,1600,2026-03-30,2022-11-01,
+Oakview Apartments,106,Tommy Chen,tommy.chen@gmail.com,+19194550106,1250,2025-04-01,2026-03-31,card,05/26,1,0,no,0,2026-05-01,2025-04-01,
+Oakview Apartments,201,Aaliyah Brooks,aaliyah.b@gmail.com,+19194550201,725,2025-09-01,2026-08-31,unknown,,3,2,no,725,2026-03-29,2025-09-01,
+Oakview Apartments,202,Robert Torres,r.torres@gmail.com,+19194550202,925,2024-02-01,2026-01-31,card,11/26,4,2,no,925,2026-04-03,2024-02-01,
+Oakview Apartments,203,Destiny Campbell,destiny.c@icloud.com,+19194550203,675,2025-06-01,2026-05-31,ach,,0,0,no,0,2026-05-01,2025-06-01,
+Oakview Apartments,204,Andre Harris,andre.harris@gmail.com,+19194550204,1400,2023-07-15,2026-07-14,card,06/26,2,1,no,1400,2026-04-01,2023-07-15,
