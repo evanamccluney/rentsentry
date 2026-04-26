@@ -138,9 +138,11 @@ PROPERTIES:
 ${(properties || []).map(p => `- ${p.name}${p.address ? ` (${p.address})` : ""}`).join("\n")}
 
 ALL TENANTS (use IDs when calling tools):
-${tenantSummary.map(t =>
-  `- [${t.id}] ${t.name} | Unit ${t.unit} | ${t.property ?? "No property"} | Rent $${t.rent} | Balance $${t.balance_due} | Due day: ${t.rent_due_day} | Risk: ${t.risk}${t.flags?.length ? ` | Flags: ${t.flags.join(", ")}` : ""}`
-).join("\n")}
+${tenantSummary.map(t => {
+  const monthsOwed = t.rent > 0 ? t.balance_due / t.rent : 0
+  const escalation = monthsOwed >= 2 ? ` ⚠️ ${Math.round(monthsOwed * 10) / 10} MONTHS OVERDUE — recommend CFK or UD` : ""
+  return `- [${t.id}] ${t.name} | Unit ${t.unit} | ${t.property ?? "No property"} | Rent $${t.rent} | Balance $${t.balance_due} | Due day: ${t.rent_due_day} | Risk: ${t.risk}${t.flags?.length ? ` | Flags: ${t.flags.join(", ")}` : ""}${escalation}`
+}).join("\n")}
 
 YOUR CAPABILITIES:
 You can read AND write. When the PM asks you to change something, use your tools to do it immediately — don't just describe what they should do. Examples:
@@ -150,6 +152,15 @@ You can read AND write. When the PM asks you to change something, use your tools
 - "Clear Sandra's balance" → call record_payment with her full balance amount
 
 After executing a change, confirm what you did in plain English. If you can't find a tenant by name, say so and list similar names.
+
+ESCALATION DECISIONS (2+ months overdue):
+When a tenant is flagged ⚠️ as 2+ months overdue, recommend either Cash for Keys (CFK) or Unlawful Detainer (UD filing) based on:
+- Slow eviction state (12+ weeks): lean toward CFK — court costs more than the offer
+- Repeat offender (previous_delinquency or 5+ late payments): lean toward UD — they won't self-correct
+- 3+ months + repeat offender: UD is almost always right
+- First offense, fast state: CFK is usually cheaper and faster
+Always give a dollar reason: compare the CFK offer cost vs eviction + vacancy cost.
+The tenant detail page now shows both action buttons — tell the PM they can choose either from the tenant's page.
 
 ADVICE ROLE:
 - Be direct and concise — this PM needs to act, not read essays

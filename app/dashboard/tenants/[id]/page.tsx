@@ -5,10 +5,11 @@ import Link from "next/link"
 import { ArrowLeft, Scale, HandCoins, Bell, CalendarClock, FileText, CreditCard } from "lucide-react"
 import TenantDetailActions from "@/components/dashboard/TenantDetailActions"
 import TenantActivityLog from "@/components/dashboard/TenantActivityLog"
+import EscalationDecisionBanner from "@/components/dashboard/EscalationDecisionBanner"
 
 const TIER_CONFIG: Record<string, { label: string; dot: string; textColor: string; bg: string }> = {
-  legal:        { label: "Eviction Recommended",        dot: "bg-red-500",     textColor: "text-red-400",     bg: "bg-red-500/10 border-red-500/20" },
-  pay_or_quit:  { label: "Pay or Quit Notice Ready",    dot: "bg-red-400",     textColor: "text-red-300",     bg: "bg-red-400/10 border-red-400/20" },
+  legal:        { label: "Eviction Recommended",     dot: "bg-red-500",     textColor: "text-red-400",     bg: "bg-red-500/10 border-red-500/20" },
+  pay_or_quit:  { label: "Pay or Quit Notice Ready", dot: "bg-red-400",     textColor: "text-red-300",     bg: "bg-red-400/10 border-red-400/20" },
   cash_for_keys:{ label: "Offer Cash for Keys",      dot: "bg-orange-500",  textColor: "text-orange-400",  bg: "bg-orange-500/10 border-orange-500/20" },
   payment_plan: { label: "Offer Payment Plan",       dot: "bg-amber-500",   textColor: "text-amber-400",   bg: "bg-amber-500/10 border-amber-500/20" },
   reminder:     { label: "Send Friendly Reminder",   dot: "bg-yellow-400",  textColor: "text-yellow-400",  bg: "bg-yellow-400/10 border-yellow-400/20" },
@@ -29,7 +30,6 @@ const INTERVENTION_LABELS: Record<string, string> = {
   split_pay_offer:      "Payment plan offered",
   cash_for_keys:        "Cash for Keys offered",
   legal_packet:         "Legal notice sent",
-  // legacy types from earlier versions
   card_expiry_alert:    "Payment reminder sent",
   card_expiry_30:       "Payment reminder sent",
   card_expiry_7:        "Payment reminder sent",
@@ -69,7 +69,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
       days_late_avg, late_payment_count, previous_delinquency,
       card_expiry, payment_method, last_payment_date,
       lease_start, lease_end, move_in_date,
-      properties(name, id)
+      properties(name, id, state)
     `)
     .eq("id", id)
     .eq("user_id", user!.id)
@@ -100,7 +100,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
 
   const pmState = (t.properties as any)?.state ?? null
   const evictionWeeks = pmState ? (STATE_EVICTION_WEEKS[pmState.toUpperCase()] ?? 10) : 10
-  const turnoverWeeks = 4 // avg weeks to clean, repair, and re-rent after eviction
+  const turnoverWeeks = 4
   const totalWeeks = evictionWeeks + turnoverWeeks
   const rentAmount = t.rent_amount ?? 0
   const weeklyRent = Math.round(rentAmount / 4)
@@ -111,6 +111,31 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
   const cfkMin = Math.round(rentAmount * 0.5)
   const cfkMax = Math.round(rentAmount * 1.0)
   const showCostComparison = risk.days_past_due >= 10 && (t.balance_due ?? 0) > 0
+
+  const monthsOwed = rentAmount > 0 ? (t.balance_due ?? 0) / rentAmount : 0
+  const showEscalationBanner = monthsOwed >= 2
+
+  const tenantForActions = {
+    id: t.id,
+    name: t.name,
+    email: t.email,
+    phone: t.phone,
+    action_type: risk.action_type,
+    recommended_action: risk.recommended_action,
+    tier: risk.tier,
+    balance_due: t.balance_due ?? 0,
+    rent_amount: t.rent_amount ?? 0,
+    days_past_due: risk.days_past_due,
+    days_late_avg: t.days_late_avg ?? 0,
+    late_payment_count: t.late_payment_count ?? 0,
+    previous_delinquency: t.previous_delinquency ?? false,
+    card_expiry: t.card_expiry,
+    payment_method: t.payment_method,
+    reasons: risk.reasons,
+    late_fee: risk.late_fee,
+    requires_attorney: risk.requires_attorney,
+    property_name: (t.properties as any)?.name ?? null,
+  }
 
   return (
     <div className="max-w-3xl">
@@ -137,27 +162,10 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
               </div>
             </div>
           </div>
-          <TenantDetailActions tenant={{
-            id: t.id,
-            name: t.name,
-            email: t.email,
-            phone: t.phone,
-            action_type: risk.action_type,
-            recommended_action: risk.recommended_action,
-            tier: risk.tier,
-            balance_due: t.balance_due ?? 0,
-            rent_amount: t.rent_amount ?? 0,
-            days_past_due: risk.days_past_due,
-            days_late_avg: t.days_late_avg ?? 0,
-            late_payment_count: t.late_payment_count ?? 0,
-            previous_delinquency: t.previous_delinquency ?? false,
-            card_expiry: t.card_expiry,
-            payment_method: t.payment_method,
-            reasons: risk.reasons,
-            late_fee: risk.late_fee,
-            requires_attorney: risk.requires_attorney,
-            property_name: (t.properties as any)?.name ?? null,
-          }} />
+          {/* Hide the default SMS button when the escalation banner handles actions */}
+          {!showEscalationBanner && (
+            <TenantDetailActions tenant={tenantForActions} />
+          )}
         </div>
 
         {/* Risk tier badge */}
@@ -179,20 +187,29 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
         )}
 
         {/* Why RentSentry recommends this */}
-        {risk.narrative && risk.tier !== 'healthy' && (
+        {risk.narrative && risk.tier !== 'healthy' && !showEscalationBanner && (
           <div className="mt-4 bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3">
             <div className="text-[#4b5563] text-xs uppercase tracking-wide mb-1.5">Why this recommendation</div>
             <p className="text-[#9ca3af] text-sm leading-relaxed">{risk.narrative}</p>
           </div>
         )}
 
-        {risk.requires_attorney && (
+        {risk.requires_attorney && !showEscalationBanner && (
           <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-3 py-2 mt-4">
             <Scale size={12} className="text-[#9ca3af] shrink-0" />
             <span className="text-[#9ca3af] text-xs">Consult your attorney before proceeding</span>
           </div>
         )}
       </div>
+
+      {/* Escalation banner — 2+ months owed */}
+      {showEscalationBanner && (
+        <EscalationDecisionBanner
+          tenant={tenantForActions}
+          evictionWeeks={evictionWeeks}
+          propertyState={pmState}
+        />
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
@@ -214,8 +231,8 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
         <h2 className="text-white font-semibold text-sm mb-4">Lease & Payment Info</h2>
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-y-4 gap-x-6">
           {[
-            { label: "Lease Start",      value: formatDate(t.lease_start) },
-            { label: "Lease End",        value: t.lease_end ? (
+            { label: "Lease Start",    value: formatDate(t.lease_start) },
+            { label: "Lease End",      value: t.lease_end ? (
               <span className={leaseExpiresDays !== null && leaseExpiresDays <= 30 ? "text-orange-400" : leaseExpiresDays !== null && leaseExpiresDays <= 0 ? "text-red-400" : "text-white"}>
                 {formatDate(t.lease_end)}
                 {leaseExpiresDays !== null && leaseExpiresDays <= 60 && leaseExpiresDays > 0 && (
@@ -226,10 +243,10 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
                 )}
               </span>
             ) : "—" },
-            { label: "Move-in Date",     value: formatDate(t.move_in_date) },
-            { label: "Last Payment",     value: formatDate(t.last_payment_date) },
-            { label: "Payment Method",   value: t.payment_method && t.payment_method !== "unknown" ? t.payment_method.toUpperCase() : "Unknown" },
-            { label: "Card Expiry",      value: t.card_expiry || "—" },
+            { label: "Move-in Date",   value: formatDate(t.move_in_date) },
+            { label: "Last Payment",   value: formatDate(t.last_payment_date) },
+            { label: "Payment Method", value: t.payment_method && t.payment_method !== "unknown" ? t.payment_method.toUpperCase() : "Unknown" },
+            { label: "Card Expiry",    value: t.card_expiry || "—" },
           ].map(({ label, value }) => (
             <div key={label}>
               <div className="text-[#4b5563] text-xs uppercase tracking-wide mb-1">{label}</div>
@@ -239,8 +256,8 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
         </div>
       </div>
 
-      {/* Cost comparison — only for Day 10+ delinquent tenants */}
-      {showCostComparison && (
+      {/* Cost comparison — Day 10+ delinquent, not already showing escalation banner */}
+      {showCostComparison && !showEscalationBanner && (
         <div className="bg-[#111827] border border-orange-500/20 rounded-2xl p-5 mb-5">
           <h2 className="text-white font-semibold text-sm mb-1">Cost Comparison</h2>
           <p className="text-[#4b5563] text-xs mb-4">
@@ -270,7 +287,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
             </div>
           </div>
           <p className="text-[#374151] text-xs mt-4">
-            RentSentry will never automatically send legal notices. Review this comparison and decide what's right for this tenant.
+            RentSentry will never automatically send legal notices. Review this comparison and decide what&apos;s right for this tenant.
           </p>
         </div>
       )}
