@@ -58,7 +58,7 @@ export default async function DashboardPage() {
     .select(`
       id, name, unit, email, rent_amount, balance_due,
       days_late_avg, late_payment_count, previous_delinquency,
-      card_expiry, payment_method, last_payment_date, lease_end,
+      card_expiry, payment_method, last_payment_date, lease_end, rent_due_day,
       properties(name, id)
     `)
     .eq("user_id", user!.id)
@@ -82,6 +82,7 @@ export default async function DashboardPage() {
       balance_due: t.balance_due ?? 0,
       rent_amount: t.rent_amount ?? 0,
       last_payment_date: t.last_payment_date ?? undefined,
+      rent_due_day: t.rent_due_day ?? 1,
     }),
   }))
 

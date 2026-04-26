@@ -65,7 +65,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
     .from("tenants")
     .select(`
       id, unit, name, email, phone,
-      rent_amount, balance_due,
+      rent_amount, balance_due, rent_due_day,
       days_late_avg, late_payment_count, previous_delinquency,
       card_expiry, payment_method, last_payment_date,
       lease_start, lease_end, move_in_date,
@@ -92,6 +92,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
     balance_due: t.balance_due ?? 0,
     rent_amount: t.rent_amount ?? 0,
     last_payment_date: t.last_payment_date ?? undefined,
+    rent_due_day: t.rent_due_day ?? 1,
   })
 
   const tierCfg = TIER_CONFIG[risk.tier]

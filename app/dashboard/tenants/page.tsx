@@ -10,7 +10,7 @@ export default async function TenantsPage() {
     .from("tenants")
     .select(`
       id, unit, name, email, phone,
-      rent_amount, balance_due,
+      rent_amount, balance_due, rent_due_day,
       risk_score, risk_reasons,
       days_late_avg, late_payment_count,
       previous_delinquency, card_expiry, payment_method,
@@ -57,6 +57,7 @@ export default async function TenantsPage() {
       balance_due: t.balance_due ?? 0,
       rent_amount: t.rent_amount ?? 0,
       last_payment_date: t.last_payment_date ?? undefined,
+      rent_due_day: t.rent_due_day ?? 1,
     })
     return { ...t, ...result }
   })

@@ -58,10 +58,14 @@ function evictionWeeks(state?: string | null): number {
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-function daysPastDue(lastPaymentDate: string): number {
+function daysPastDue(lastPaymentDate: string, rentDueDay = 1): number {
   const last = new Date(lastPaymentDate)
   const now = new Date()
-  const rentDueThisMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+  const dueDay = Math.min(Math.max(rentDueDay, 1), 28)
+  let rentDueThisMonth = new Date(now.getFullYear(), now.getMonth(), dueDay)
+  if (rentDueThisMonth > now) {
+    rentDueThisMonth = new Date(now.getFullYear(), now.getMonth() - 1, dueDay)
+  }
   if (last < rentDueThisMonth) {
     return Math.floor((now.getTime() - rentDueThisMonth.getTime()) / (1000 * 60 * 60 * 24))
   }

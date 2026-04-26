@@ -43,6 +43,7 @@ const COLUMN_MAP: Record<keyof MappedTenant, string[]> = {
   move_in_date:       ['move in date', 'move-in', 'movein', 'move in', 'occupancy date'],
   move_out_date:      ['move out date', 'move-out', 'moveout', 'move out', 'vacate date', 'notice date'],
   days_past_due:      ['days past due', 'days overdue', 'days delinquent', 'overdue days', 'dpd', 'days late'],
+  rent_due_day:       ['rent due day', 'due day', 'due date day', 'payment due day', 'rent due on'],
 }
 
 // Extra columns we track for history aggregation but don't store directly

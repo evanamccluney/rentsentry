@@ -18,6 +18,7 @@ export interface TenantRiskInput {
   balance_due: number
   rent_amount: number
   last_payment_date?: string  // ISO date — used to compute days past due
+  rent_due_day?: number       // day of month rent is due (default: 1)
 }
 
 export interface RiskResult {
@@ -43,12 +44,18 @@ function cardExpiresWithinDays(expiry: string, days: number): boolean {
   } catch { return false }
 }
 
-function estimateDaysPastDue(lastPaymentDate?: string): number {
+function estimateDaysPastDue(lastPaymentDate?: string, rentDueDay = 1): number {
   if (!lastPaymentDate) return 0
   try {
     const last = new Date(lastPaymentDate)
     const now = new Date()
-    const rentDueThisMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+    const dueDay = Math.min(Math.max(rentDueDay, 1), 28)
+    // Find the most recent due date that has already passed
+    let rentDueThisMonth = new Date(now.getFullYear(), now.getMonth(), dueDay)
+    if (rentDueThisMonth > now) {
+      // Due date hasn't happened yet this month — use last month's
+      rentDueThisMonth = new Date(now.getFullYear(), now.getMonth() - 1, dueDay)
+    }
     if (last < rentDueThisMonth) {
       return Math.floor((now.getTime() - rentDueThisMonth.getTime()) / (1000 * 60 * 60 * 24))
     }
@@ -60,11 +67,11 @@ export function scoreTenant(t: TenantRiskInput): RiskResult {
   const {
     balance_due, rent_amount, late_payment_count,
     previous_delinquency, days_late_avg, card_expiry,
-    payment_method, last_payment_date,
+    payment_method, last_payment_date, rent_due_day,
   } = t
 
   const monthsOwed   = rent_amount > 0 ? balance_due / rent_amount : 0
-  const daysPastDue  = estimateDaysPastDue(last_payment_date)
+  const daysPastDue  = estimateDaysPastDue(last_payment_date, rent_due_day ?? 1)
   const lateFee      = balance_due > 0 && daysPastDue > 5 ? Math.round(rent_amount * 0.05) : 0
   const repeatOffender = previous_delinquency || late_payment_count >= 5
   const hasHistory     = late_payment_count >= 2 || days_late_avg >= 3

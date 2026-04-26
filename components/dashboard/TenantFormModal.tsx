@@ -16,6 +16,7 @@ interface TenantData {
   property_id: string
   rent_amount: string
   balance_due: string
+  rent_due_day: string
   payment_method: string
   card_expiry: string
   lease_start: string
@@ -28,8 +29,9 @@ interface TenantData {
 
 const EMPTY: TenantData = {
   name: "", email: "", phone: "", unit: "", property_id: "",
-  rent_amount: "", balance_due: "0", payment_method: "unknown",
-  card_expiry: "", lease_start: "", lease_end: "", last_payment_date: "",
+  rent_amount: "", balance_due: "0", rent_due_day: "1",
+  payment_method: "unknown", card_expiry: "", lease_start: "",
+  lease_end: "", last_payment_date: "",
   days_late_avg: "0", late_payment_count: "0", previous_delinquency: false,
 }
 
@@ -68,6 +70,7 @@ export default function TenantFormModal({ mode, properties, initial, onClose }: 
       property_id: form.property_id,
       rent_amount: parseFloat(form.rent_amount) || 0,
       balance_due: parseFloat(form.balance_due) || 0,
+      rent_due_day: parseInt(form.rent_due_day) || 1,
       payment_method: form.payment_method || "unknown",
       card_expiry: form.card_expiry.trim() || null,
       lease_start: form.lease_start || null,
@@ -144,9 +147,10 @@ export default function TenantFormModal({ mode, properties, initial, onClose }: 
             <div>
               <p className="text-[#4b5563] text-xs uppercase tracking-wide mb-3">Payment</p>
               <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-3 gap-3">
                   <Field label="Rent Amount ($)" value={form.rent_amount} onChange={v => set("rent_amount", v)} placeholder="2000" type="number" />
                   <Field label="Balance Due ($)" value={form.balance_due} onChange={v => set("balance_due", v)} placeholder="0" type="number" />
+                  <Field label="Due Day of Month" value={form.rent_due_day} onChange={v => set("rent_due_day", v)} placeholder="1" type="number" />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
