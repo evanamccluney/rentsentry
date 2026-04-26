@@ -151,7 +151,10 @@ export function scoreTenant(t: TenantRiskInput): RiskResult {
   // ── PAY OR QUIT — Day 20-35 ───────────────────────────────────────────────
   // Legal notice starts the clock without committing to eviction.
   // Triggered by a full month owed + time/history, or partial balance with escalating signals.
+  // NOTE: 2+ months owed is always Pay or Quit regardless of daysPastDue — the balance alone
+  // proves non-payment; the exact date tracking is secondary.
   if (
+    monthsOwed >= 2 ||
     (monthsOwed >= 1 && daysPastDue >= 20) ||
     (monthsOwed >= 1 && repeatOffender) ||
     (balance_due > 0 && daysPastDue >= 25 && (late_payment_count >= 3 || repeatOffender)) ||
@@ -183,8 +186,9 @@ export function scoreTenant(t: TenantRiskInput): RiskResult {
 
   // ── PAYMENT PLAN — Day 15-25 ──────────────────────────────────────────────
   // Structure repayment before it escalates to a legal situation.
-  // Balance + time pressure (15+ days) or existing late history.
-  if (balance_due > 0 && (daysPastDue >= 15 || hasHistory)) {
+  // Balance + time pressure (15+ days), existing late history, OR a full month owed
+  // (balance alone proves a missed month — day tracking is secondary).
+  if (balance_due > 0 && (monthsOwed >= 1 || daysPastDue >= 15 || hasHistory)) {
     const reasons: string[] = [`${fmt.balance} outstanding`]
     if (daysPastDue >= 15)      reasons.push(`${daysPastDue} days since rent was due`)
     if (late_payment_count >= 2) reasons.push(`${late_payment_count} late payments in history`)
