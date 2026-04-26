@@ -185,6 +185,7 @@ ADVICE ROLE:
   const toolResults: OpenAI.Chat.ChatCompletionMessageParam[] = []
 
   for (const call of firstChoice.tool_calls) {
+    if (call.type !== "function") continue
     const args = JSON.parse(call.function.arguments)
     let result = ""
 

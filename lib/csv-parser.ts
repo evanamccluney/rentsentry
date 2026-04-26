@@ -21,6 +21,7 @@ export interface MappedTenant {
   move_in_date: string
   move_out_date: string
   days_past_due: number
+  rent_due_day: number
 }
 
 // Common column name aliases from various PM software exports
@@ -281,5 +282,6 @@ export function mapRow(row: RawRow, mapping: Record<keyof MappedTenant, string |
     move_in_date:       get('move_in_date'),
     move_out_date:      get('move_out_date'),
     days_past_due:      parseInt(get('days_past_due')) || 0,
+    rent_due_day:       parseInt(get('rent_due_day')) || 1,
   }
 }
