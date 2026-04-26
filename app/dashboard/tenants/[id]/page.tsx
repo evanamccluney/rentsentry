@@ -177,6 +177,14 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
           </div>
         )}
 
+        {/* Why RentSentry recommends this */}
+        {risk.narrative && risk.tier !== 'healthy' && (
+          <div className="mt-4 bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3">
+            <div className="text-[#4b5563] text-xs uppercase tracking-wide mb-1.5">Why this recommendation</div>
+            <p className="text-[#9ca3af] text-sm leading-relaxed">{risk.narrative}</p>
+          </div>
+        )}
+
         {risk.requires_attorney && (
           <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-3 py-2 mt-4">
             <Scale size={12} className="text-[#9ca3af] shrink-0" />
