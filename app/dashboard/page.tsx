@@ -91,6 +91,10 @@ export default async function DashboardPage() {
   const totalOwed = tenants.reduce((s, t) => s + (t.balance_due || 0), 0)
   const paidUp = tenants.filter(t => (t.balance_due || 0) === 0).length
   const collectionRate = total > 0 ? Math.round((paidUp / total) * 100) : 0
+  const revenueAtRisk = tenants
+    .filter(t => ["legal", "pay_or_quit", "cash_for_keys"].includes(t.tier))
+    .reduce((s, t) => s + (t.rent_amount || 0), 0)
+  const revenueAtRiskPct = monthlyRent > 0 ? Math.round((revenueAtRisk / monthlyRent) * 100) : 0
 
   const ACTION_ORDER = ["legal", "pay_or_quit", "cash_for_keys", "payment_plan", "reminder"]
   const needsAction = tenants
@@ -156,25 +160,25 @@ export default async function DashboardPage() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         {[
           {
-            label: "Total Tenants",
-            value: total.toString(),
-            sub: `across all properties`,
-            icon: <Users size={16} className="text-blue-400" />,
+            label: "Monthly Rent Roll",
+            value: `$${monthlyRent.toLocaleString()}`,
+            sub: `${total} tenants · $${Math.round(monthlyRent / Math.max(total, 1)).toLocaleString()} avg`,
+            icon: <TrendingUp size={16} className="text-emerald-400" />,
             color: "text-white",
           },
           {
-            label: "Monthly Rent Roll",
-            value: `$${monthlyRent.toLocaleString()}`,
-            sub: `$${Math.round(monthlyRent / Math.max(total, 1)).toLocaleString()} avg/unit`,
-            icon: <TrendingUp size={16} className="text-emerald-400" />,
-            color: "text-white",
+            label: "Revenue at Risk",
+            value: `$${revenueAtRisk.toLocaleString()}`,
+            sub: revenueAtRisk > 0 ? `${revenueAtRiskPct}% of rent roll · legal/PoQ/CFK tiers` : "no critical-tier tenants",
+            icon: <AlertTriangle size={16} className="text-red-400" />,
+            color: revenueAtRisk > 0 ? "text-red-400" : "text-emerald-400",
           },
           {
             label: "Outstanding Balance",
             value: `$${totalOwed.toLocaleString()}`,
             sub: totalOwed > 0 ? `across ${tenants.filter(t => (t.balance_due || 0) > 0).length} tenants` : "nothing owed",
-            icon: <DollarSign size={16} className="text-red-400" />,
-            color: totalOwed > 0 ? "text-red-400" : "text-white",
+            icon: <DollarSign size={16} className="text-orange-400" />,
+            color: totalOwed > 0 ? "text-orange-400" : "text-white",
           },
           {
             label: "Collection Rate",

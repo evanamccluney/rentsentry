@@ -6,6 +6,7 @@ import { ArrowLeft, Scale, HandCoins, Bell, CalendarClock, FileText, CreditCard 
 import TenantDetailActions from "@/components/dashboard/TenantDetailActions"
 import TenantActivityLog from "@/components/dashboard/TenantActivityLog"
 import EscalationDecisionBanner from "@/components/dashboard/EscalationDecisionBanner"
+import TenantNotes from "@/components/dashboard/TenantNotes"
 
 const TIER_CONFIG: Record<string, { label: string; dot: string; textColor: string; bg: string }> = {
   legal:        { label: "Eviction Recommended",     dot: "bg-red-500",     textColor: "text-red-400",     bg: "bg-red-500/10 border-red-500/20" },
@@ -68,7 +69,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
       rent_amount, balance_due, rent_due_day,
       days_late_avg, late_payment_count, previous_delinquency,
       card_expiry, payment_method, last_payment_date,
-      lease_start, lease_end, move_in_date,
+      lease_start, lease_end, move_in_date, notes,
       properties(name, id, state)
     `)
     .eq("id", id)
@@ -291,6 +292,9 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
           </p>
         </div>
       )}
+
+      {/* Notes */}
+      <TenantNotes tenantId={t.id} initialNotes={(t as any).notes ?? null} />
 
       {/* Activity log */}
       <div className="bg-[#111827] border border-white/10 rounded-2xl p-5">
