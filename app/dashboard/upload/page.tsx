@@ -13,7 +13,7 @@ type Step = "upload" | "mapping" | "preview" | "importing" | "done"
 
 type ChangeType = "paid" | "improved" | "worsened" | "new" | "unchanged"
 interface ChangeInfo { type: ChangeType; prevBalance: number }
-type PreviewTenant = MappedTenant & { risk_score: string; risk_reasons: string[]; change?: ChangeInfo }
+type PreviewTenant = MappedTenant & { risk_score: string; risk_reasons: string[]; change?: ChangeInfo; _editingRent?: boolean }
 
 const RISK_COLORS: Record<string, string> = {
   green: "bg-green-500 text-black",
@@ -48,6 +48,7 @@ export default function UploadPage() {
   const [preview, setPreview] = useState<PreviewTenant[]>([])
   const [changeMap, setChangeMap] = useState<Map<string, ChangeInfo>>(new Map())
   const [importedCount, setImportedCount] = useState(0)
+  const [defaultRent, setDefaultRent] = useState("")
 
   const handleFile = useCallback((file: File) => {
     const reader = new FileReader()
@@ -474,6 +475,45 @@ export default function UploadPage() {
       {/* Step 3: Preview */}
       {step === "preview" && (
         <div>
+          {/* Missing rent amount warning */}
+          {preview.some(t => !t.rent_amount) && (
+            <div className="mb-4 bg-orange-500/10 border border-orange-500/20 rounded-xl px-4 py-3">
+              <div className="flex items-start gap-3">
+                <AlertTriangle size={16} className="text-orange-400 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-orange-400 text-sm font-semibold">
+                    Rent amount missing for {preview.filter(t => !t.rent_amount).length} tenant{preview.filter(t => !t.rent_amount).length !== 1 ? "s" : ""}
+                  </p>
+                  <p className="text-[#6b7280] text-xs mt-0.5 mb-3">
+                    Your CSV didn't include a rent amount column. Without it, risk scoring will be less accurate. Set a default below, edit individual rows in the table, or ask the AI assistant to help.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[#9ca3af] text-xs shrink-0">Set all missing to $</span>
+                    <input
+                      type="number"
+                      placeholder="e.g. 1500"
+                      value={defaultRent}
+                      onChange={e => setDefaultRent(e.target.value)}
+                      className="w-28 bg-[#0a0e1a] border border-white/10 text-white text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-orange-500/40"
+                    />
+                    <button
+                      onClick={() => {
+                        const amt = parseFloat(defaultRent)
+                        if (!amt || amt <= 0) return
+                        setPreview(prev => prev.map(t => t.rent_amount ? t : { ...t, rent_amount: amt }))
+                        setDefaultRent("")
+                      }}
+                      className="bg-orange-500/20 hover:bg-orange-500/30 border border-orange-500/30 text-orange-400 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
+                    >
+                      Apply
+                    </button>
+                    <span className="text-[#4b5563] text-xs">or click any $0 in the table to edit individually</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Historical CSV banner */}
           {isHistorical && (
             <div className="mb-4 bg-blue-500/10 border border-blue-500/20 rounded-xl px-4 py-3 flex items-start gap-3">
@@ -594,7 +634,33 @@ export default function UploadPage() {
                   <tr key={i} className="border-t border-[#1e2d45] hover:bg-[#131929]">
                     <td className="px-4 py-3 text-white font-mono text-xs">{t.unit || "—"}</td>
                     <td className="px-4 py-3 text-white">{t.name || "—"}</td>
-                    <td className="px-4 py-3 text-white">${t.rent_amount.toLocaleString()}</td>
+                    <td className="px-4 py-3">
+                      {t._editingRent ? (
+                        <input
+                          type="number"
+                          autoFocus
+                          defaultValue={t.rent_amount || ""}
+                          placeholder="0"
+                          className="w-24 bg-[#0a0e1a] border border-blue-500/40 text-white text-sm rounded-lg px-2 py-1 focus:outline-none"
+                          onBlur={e => {
+                            const val = parseFloat(e.target.value) || 0
+                            setPreview(prev => prev.map((p, pi) => pi === i ? { ...p, rent_amount: val, _editingRent: false } : p))
+                          }}
+                          onKeyDown={e => {
+                            if (e.key === "Enter") (e.target as HTMLInputElement).blur()
+                            if (e.key === "Escape") setPreview(prev => prev.map((p, pi) => pi === i ? { ...p, _editingRent: false } : p))
+                          }}
+                        />
+                      ) : (
+                        <button
+                          onClick={() => setPreview(prev => prev.map((p, pi) => pi === i ? { ...p, _editingRent: true } : p))}
+                          className={`text-left hover:underline ${t.rent_amount ? "text-white" : "text-orange-400 font-medium"}`}
+                          title="Click to edit"
+                        >
+                          {t.rent_amount ? `$${t.rent_amount.toLocaleString()}` : "$0 — click to set"}
+                        </button>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       {t.balance_due > 0
                         ? <span className="text-red-400">${t.balance_due.toLocaleString()}</span>

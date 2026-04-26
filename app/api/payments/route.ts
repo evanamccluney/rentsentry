@@ -31,10 +31,13 @@ export async function POST(req: NextRequest) {
     note: note ?? null,
   })
 
-  // Update tenant balance
+  // Update tenant balance and last payment date
   await supabase
     .from("tenants")
-    .update({ balance_due: newBalance })
+    .update({
+      balance_due: newBalance,
+      last_payment_date: date ?? new Date().toISOString().split("T")[0],
+    })
     .eq("id", tenantId)
     .eq("user_id", user.id)
 

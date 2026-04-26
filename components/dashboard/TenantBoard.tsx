@@ -16,20 +16,22 @@ import { STATE_RULES, generatePayOrQuitPDF } from "@/lib/pay-or-quit"
 // ── Email previews ────────────────────────────────────────────────────────────
 
 // SMS previews — shown in the review modal before sending
-const SMS_PREVIEWS: Record<string, (name: string) => string> = {
-  payment_reminder: (name) =>
-    `Hi ${name}, this is a reminder that rent is due on the 1st. Please ensure payment is ready. Contact your property manager with any questions.`,
+const SMS_PREVIEWS: Record<string, (name: string, balance?: number, daysPastDue?: number) => string> = {
+  payment_reminder: (name, balance, daysPastDue) =>
+    balance && balance > 0
+      ? `Hi ${name}, you have an outstanding balance of $${balance.toLocaleString()}${daysPastDue && daysPastDue > 0 ? ` that is ${daysPastDue} days overdue` : " that is overdue"}. Please arrange payment immediately or contact your property manager.`
+      : `Hi ${name}, this is a reminder that rent is due on the 1st. Please ensure payment is ready. Contact your property manager with any questions.`,
   proactive_reminder: (name) =>
     `Hi ${name}, rent is due on the 1st. Based on your payment history we wanted to reach out early. Contact your property manager with any questions.`,
   // card_expiry_alert kept for backward compat with historical interventions
   card_expiry_alert: (name) =>
     `Hi ${name}, your payment method on file may need attention. Please confirm or update it before the 1st to avoid any issues with your tenancy.`,
-  split_pay_offer: (name) =>
-    `Hi ${name}, your property manager is offering a flexible split-payment option this month. Reply or call to arrange installments before the 1st.`,
+  split_pay_offer: (name, balance) =>
+    `Hi ${name}, your property manager is offering a flexible split-payment option for your outstanding balance${balance && balance > 0 ? ` of $${balance.toLocaleString()}` : ""}. Reply or call to arrange installments.`,
   cash_for_keys: (name) =>
     `Hi ${name}, your property manager has a time-sensitive offer regarding your unit. Please contact them within 5 days to discuss your options.`,
-  legal_packet: (name) =>
-    `Hi ${name}, your account is significantly overdue and legal proceedings are being prepared. Contact your property manager immediately to resolve this.`,
+  legal_packet: (name, balance) =>
+    `Hi ${name}, your account${balance && balance > 0 ? ` has an outstanding balance of $${balance.toLocaleString()} and` : " is significantly overdue and"} legal proceedings are being prepared. Contact your property manager immediately to resolve this.`,
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -664,7 +666,7 @@ function PreviewModal({
 }) {
   const msgFn = SMS_PREVIEWS[actionType]
   if (!msgFn) return null
-  const msgBody = msgFn(tenant.name)
+  const msgBody = msgFn(tenant.name, tenant.balance_due, tenant.days_past_due)
   const hasPhone = !!tenant.phone
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onCancel}>
@@ -1193,7 +1195,7 @@ function PayOrQuitModal({
     }
   }
 
-  const smsBody = SMS_PREVIEWS["legal_packet"]?.(tenant.name) ?? ""
+  const smsBody = SMS_PREVIEWS["legal_packet"]?.(tenant.name, tenant.balance_due) ?? ""
   const hasPhone = !!tenant.phone
 
   return (
@@ -1291,6 +1293,145 @@ function PayOrQuitModal({
   )
 }
 
+// ── CashForKeysOutcomeModal ───────────────────────────────────────────────────
+
+const CFK_OUTCOMES = [
+  {
+    key: "cfk_accepted",
+    label: "Accepted",
+    desc: "Tenant agreed to move out",
+    color: "bg-emerald-500/10 border-emerald-500/25 text-emerald-400",
+    dot: "bg-emerald-500",
+  },
+  {
+    key: "cfk_declined",
+    label: "Declined",
+    desc: "Tenant refused the offer",
+    color: "bg-red-500/10 border-red-500/25 text-red-400",
+    dot: "bg-red-500",
+  },
+  {
+    key: "cfk_in_discussion",
+    label: "In Discussion",
+    desc: "Negotiation ongoing",
+    color: "bg-blue-500/10 border-blue-500/25 text-blue-400",
+    dot: "bg-blue-400",
+  },
+  {
+    key: "cfk_switched",
+    label: "Switched Strategy",
+    desc: "Moving to Pay or Quit / legal",
+    color: "bg-orange-500/10 border-orange-500/25 text-orange-400",
+    dot: "bg-orange-500",
+  },
+  {
+    key: "cfk_paused",
+    label: "Pause",
+    desc: "Waiting on tenant follow-up",
+    color: "bg-white/5 border-white/10 text-[#6b7280]",
+    dot: "bg-[#4b5563]",
+  },
+] as const
+
+type CfkOutcomeKey = typeof CFK_OUTCOMES[number]["key"]
+
+const CFK_OUTCOME_CONFIG: Record<CfkOutcomeKey, {
+  badge: string
+  badgeStyle: string
+  dot: string
+  nextStep: string
+}> = {
+  cfk_accepted:      { badge: "Move-out Scheduled",      badgeStyle: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20", dot: "bg-emerald-500", nextStep: "Document the agreement and confirm move-out date in writing." },
+  cfk_declined:      { badge: "Escalation Recommended",  badgeStyle: "bg-red-500/10 text-red-400 border-red-500/20",            dot: "bg-red-500",     nextStep: "Tenant declined — send Pay or Quit notice to escalate." },
+  cfk_in_discussion: { badge: "In Discussion",           badgeStyle: "bg-blue-500/10 text-blue-400 border-blue-500/20",         dot: "bg-blue-400",    nextStep: "Negotiation ongoing — check back within 48 hours." },
+  cfk_switched:      { badge: "Strategy Changed",        badgeStyle: "bg-orange-500/10 text-orange-400 border-orange-500/20",   dot: "bg-orange-500",  nextStep: "Switched to escalation — send Pay or Quit notice." },
+  cfk_paused:        { badge: "Awaiting Response",       badgeStyle: "bg-white/5 text-[#6b7280] border-white/10",               dot: "bg-[#4b5563]",   nextStep: "Automation paused — waiting on tenant follow-up." },
+}
+
+function CashForKeysOutcomeModal({
+  tenant,
+  onClose,
+  onOutcomeSet,
+}: {
+  tenant: Tenant
+  onClose: () => void
+  onOutcomeSet: (outcome: CfkOutcomeKey) => void
+}) {
+  const [saving, setSaving] = useState<string | null>(null)
+
+  async function selectOutcome(key: CfkOutcomeKey, label: string) {
+    setSaving(key)
+    try {
+      // Update resolution_status
+      const res = await fetch("/api/tenants/resolution", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenantId: tenant.id, resolution_status: key }),
+      })
+      if (!res.ok) throw new Error()
+
+      // Log as intervention
+      await fetch("/api/interventions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenantId: tenant.id,
+          type: `cfk_outcome_${key.replace("cfk_", "")}`,
+          snapshot: buildSnapshot(tenant),
+        }),
+      })
+
+      toast.success(`Outcome logged: ${label}`)
+      onOutcomeSet(key)
+      onClose()
+    } catch {
+      toast.error("Could not save outcome.")
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="bg-[#111827] border border-white/10 rounded-2xl w-full max-w-sm mx-4 shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-white font-semibold text-sm">Cash for Keys — Update Outcome</h3>
+              <p className="text-[#4b5563] text-xs mt-0.5">{tenant.name} · Unit {tenant.unit}</p>
+            </div>
+            <button onClick={onClose} className="text-[#4b5563] hover:text-white transition-colors">
+              <X size={15} />
+            </button>
+          </div>
+
+          <div className="space-y-2">
+            {CFK_OUTCOMES.map(outcome => (
+              <button
+                key={outcome.key}
+                onClick={() => selectOutcome(outcome.key, outcome.label)}
+                disabled={saving !== null}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all text-left disabled:opacity-50 hover:opacity-90 ${outcome.color}`}
+              >
+                <span className={`w-2 h-2 rounded-full shrink-0 ${outcome.dot}`} />
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold leading-tight">
+                    {saving === outcome.key ? "Saving…" : outcome.label}
+                  </div>
+                  <div className="text-xs opacity-70 mt-0.5">{outcome.desc}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── TenantCard ────────────────────────────────────────────────────────────────
 
 function TenantCard({
@@ -1316,6 +1457,14 @@ function TenantCard({
   const [editing, setEditing] = useState(false)
   const [payOrQuitOpen, setPayOrQuitOpen] = useState(false)
   const [aiOpen, setAiOpen] = useState(false)
+  const [cfkOutcomeOpen, setCfkOutcomeOpen] = useState(false)
+  const [localCfkOutcome, setLocalCfkOutcome] = useState<CfkOutcomeKey | null>(null)
+
+  // Derive CFK outcome state — local override takes priority over DB value
+  const cfkOutcomeKey = (localCfkOutcome ?? t.resolution_status ?? null) as CfkOutcomeKey | null
+  const isCfkWithOutcome = t.tier === "cash_for_keys" && cfkOutcomeKey?.startsWith("cfk_")
+  const isCfkSent = t.tier === "cash_for_keys" && (autoStatus === "sent" || isCfkWithOutcome)
+  const cfkOutcomeCfg = cfkOutcomeKey && isCfkWithOutcome ? CFK_OUTCOME_CONFIG[cfkOutcomeKey] : null
 
   // Optimistic state: immediately transition to "queued" after PM approves action,
   // then server refresh will confirm with "sent" from DB (clearing this override).
@@ -1429,6 +1578,13 @@ function TenantCard({
       {aiOpen && (
         <TenantAIModal tenant={t} onClose={() => setAiOpen(false)} />
       )}
+      {cfkOutcomeOpen && (
+        <CashForKeysOutcomeModal
+          tenant={t}
+          onClose={() => setCfkOutcomeOpen(false)}
+          onOutcomeSet={(key) => { setLocalCfkOutcome(key); onActionExecuted() }}
+        />
+      )}
 
       <div className={`bg-[#111827] border border-white/[0.08] hover:border-white/[0.13] rounded-2xl p-5 transition-all hover:shadow-lg hover:shadow-black/20 ${statusCfg.opacity}`}>
 
@@ -1475,13 +1631,25 @@ function TenantCard({
 
         {/* ── Row 2: Status badges (max 2) ────────────────────────────────────── */}
         <div className="flex items-center gap-2 mb-3">
-          <span className={`inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border font-medium ${statusCfg.badgeStyle}`}>
-            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusCfg.dot}`} />
-            {statusCfg.label}
-          </span>
-          {t.tier !== "healthy" && (
+          {cfkOutcomeCfg ? (
+            <span className={`inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border font-medium ${cfkOutcomeCfg.badgeStyle}`}>
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfkOutcomeCfg.dot}`} />
+              {cfkOutcomeCfg.badge}
+            </span>
+          ) : (
+            <span className={`inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border font-medium ${statusCfg.badgeStyle}`}>
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusCfg.dot}`} />
+              {isCfkSent && !cfkOutcomeCfg ? "Cash for Keys — In Progress" : statusCfg.label}
+            </span>
+          )}
+          {t.tier !== "healthy" && !cfkOutcomeCfg && (
             <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${config.badgeStyle}`}>
               {config.badge}
+            </span>
+          )}
+          {t.tier === "cash_for_keys" && (
+            <span className="text-xs px-2 py-0.5 rounded-full border font-medium bg-orange-500/10 text-orange-400 border-orange-500/20">
+              Cash for Keys
             </span>
           )}
         </div>
@@ -1525,10 +1693,28 @@ function TenantCard({
           </div>
         )}
 
+        {/* ── Row 4b: CFK outcome next step ───────────────────────────────────── */}
+        {cfkOutcomeCfg && (
+          <div className="rounded-lg px-3 py-2.5 mb-3 border border-white/[0.06] bg-white/[0.02]">
+            <div className="text-[#d1d5db] text-xs font-medium">{cfkOutcomeCfg.nextStep}</div>
+          </div>
+        )}
+
         {/* ── Row 5: Actions ──────────────────────────────────────────────────── */}
         <div className="flex items-center gap-2">
-          {/* Primary: Review & Send (tier-specific label) */}
-          {canReviewSend && (
+          {/* CFK sent/outcome: show Update Outcome instead of Review & Send */}
+          {isCfkSent && (
+            <button
+              onClick={() => setCfkOutcomeOpen(true)}
+              className="flex-1 py-2 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-1.5 bg-orange-500/10 border border-orange-500/20 text-orange-400 hover:bg-orange-500/20"
+            >
+              <HandCoins size={12} />
+              Update Outcome
+            </button>
+          )}
+
+          {/* Primary: Review & Send (tier-specific label) — only if NOT in CFK sent state */}
+          {canReviewSend && !isCfkSent && (
             <button
               onClick={() => requestAction(t.action_type)}
               disabled={loading !== null}
