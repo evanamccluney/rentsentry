@@ -1138,6 +1138,7 @@ function PayOrQuitModal({
   const [downloading, setDownloading] = useState(false)
   const [sendingSms, setSendingSms] = useState(false)
   const [cfkMode, setCfkMode] = useState(false)
+  const [activeTab, setActiveTab] = useState<"plan" | "poq" | "cfk">("plan")
 
   const monthsOwed = tenant.rent_amount > 0 ? tenant.balance_due / tenant.rent_amount : 0
   const showCfkTab = monthsOwed >= 2
@@ -1199,7 +1200,7 @@ function PayOrQuitModal({
     }
   }
 
-  const smsBody = SMS_PREVIEWS[cfkMode ? "cash_for_keys" : "legal_packet"]?.(tenant.name, tenant.balance_due) ?? ""
+  const smsBody = SMS_PREVIEWS[activeTab === "cfk" ? "cash_for_keys" : "legal_packet"]?.(tenant.name, tenant.balance_due) ?? ""
   const hasPhone = !!tenant.phone
 
   return (
@@ -1209,7 +1210,7 @@ function PayOrQuitModal({
           <div className="flex items-center justify-between mb-4">
             <div>
               <h3 className="text-white font-semibold text-base">
-                {cfkMode ? "Cash for Keys Offer" : "Pay or Quit Notice"}
+                {activeTab === "cfk" ? "Cash for Keys Offer" : activeTab === "plan" ? "Payment Plan Offer" : "Pay or Quit Notice"}
               </h3>
               <p className="text-[#4b5563] text-xs mt-0.5">
                 {tenant.name} · <span className="text-red-400">${tenant.balance_due.toLocaleString()} owed</span>
@@ -1221,21 +1222,29 @@ function PayOrQuitModal({
             </button>
           </div>
 
-          {/* Tab toggle — only shown when 2+ months owed */}
+          {/* 3-tab system for 2+ months: Plan → PoQ → CFK */}
           {showCfkTab && (
-            <div className="flex gap-1.5 mb-4 bg-white/[0.03] border border-white/[0.06] rounded-xl p-1">
+            <div className="flex gap-1 mb-4 bg-white/[0.03] border border-white/[0.06] rounded-xl p-1">
               <button
-                onClick={() => setCfkMode(false)}
+                onClick={() => setActiveTab("plan")}
                 className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                  !cfkMode ? "bg-red-500/20 text-red-300 border border-red-500/30" : "text-[#6b7280] hover:text-white"
+                  activeTab === "plan" ? "bg-amber-500/20 text-amber-300 border border-amber-500/30" : "text-[#6b7280] hover:text-white"
+                }`}
+              >
+                Payment Plan
+              </button>
+              <button
+                onClick={() => setActiveTab("poq")}
+                className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                  activeTab === "poq" ? "bg-red-500/20 text-red-300 border border-red-500/30" : "text-[#6b7280] hover:text-white"
                 }`}
               >
                 Pay or Quit
               </button>
               <button
-                onClick={() => setCfkMode(true)}
+                onClick={() => setActiveTab("cfk")}
                 className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                  cfkMode ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" : "text-[#6b7280] hover:text-white"
+                  activeTab === "cfk" ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" : "text-[#6b7280] hover:text-white"
                 }`}
               >
                 Cash for Keys
@@ -1243,8 +1252,65 @@ function PayOrQuitModal({
             </div>
           )}
 
-          {/* CFK mode content */}
-          {cfkMode ? (
+          {/* Payment Plan tab */}
+          {(showCfkTab && activeTab === "plan") && (() => {
+            const installment = Math.ceil(tenant.balance_due / 2)
+            const planSms = `Hi ${tenant.name}, your property manager would like to work with you on your outstanding balance of $${tenant.balance_due.toLocaleString()}. We can split this into 2 payments of $${installment.toLocaleString()}. Please contact us within 5 days to confirm this arrangement.`
+            return (
+              <div>
+                <div className="bg-amber-500/5 border border-amber-500/15 rounded-xl px-4 py-3 mb-4">
+                  <p className="text-amber-400 text-sm font-medium mb-1">Offer a Payment Plan First</p>
+                  <p className="text-[#6b7280] text-xs leading-relaxed">
+                    Before serving a legal notice, offer {tenant.name} a structured plan to pay the ${tenant.balance_due.toLocaleString()} balance in installments. Most tenants respond when given a realistic path.
+                  </p>
+                  <div className="mt-2 flex gap-4 text-xs">
+                    <span className="text-amber-400/80">2 payments · ${installment.toLocaleString()} each</span>
+                    <span className="text-[#4b5563]">or negotiate terms directly</span>
+                  </div>
+                </div>
+                <div className="bg-[#0d1117] border border-white/5 rounded-xl p-3 mb-1">
+                  <p className="text-[#4b5563] text-[10px] uppercase tracking-wide mb-1.5">SMS Preview</p>
+                  <p className="text-[#d1d5db] text-xs leading-relaxed">{planSms}</p>
+                </div>
+                <div className="flex justify-between items-center mb-4">
+                  <span className="text-[#2e3a50] text-[10px]">{hasPhone ? tenant.phone : "No phone on file"}</span>
+                  <span className="text-[#2e3a50] text-[10px]">{planSms.length} chars</span>
+                </div>
+                <div className="flex gap-3">
+                  <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-[#9ca3af] bg-white/5 hover:bg-white/10 transition-colors">
+                    Cancel
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (!tenant.phone) return
+                      setSendingSms(true)
+                      try {
+                        const res = await fetch("/api/interventions", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ tenantId: tenant.id, type: "split_pay_offer", phone: tenant.phone, name: tenant.name, snapshot: buildSnapshot(tenant) }),
+                        })
+                        const data = await res.json()
+                        if (data.ok) { toast.success("Payment plan offer sent"); onSmsSuccess(); onClose() }
+                        else toast.error(data.error || "Could not send.")
+                      } catch { toast.error("Could not send.") }
+                      finally { setSendingSms(false) }
+                    }}
+                    disabled={sendingSms || !hasPhone}
+                    className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white bg-amber-600 hover:bg-amber-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    <Send size={13} />
+                    {sendingSms ? "Sending…" : "Send Payment Plan SMS"}
+                  </button>
+                </div>
+                {!hasPhone && <p className="text-orange-400/70 text-[10px] mt-2 text-center">No phone on file — action will be logged only</p>}
+                <p className="text-[#2e3a50] text-[10px] mt-3 text-center">If no response in 5 days, escalate to Pay or Quit or Cash for Keys</p>
+              </div>
+            )
+          })()}
+
+          {/* CFK tab */}
+          {(!showCfkTab || activeTab === "cfk") && activeTab === "cfk" && (
             <div>
               <div className="bg-emerald-500/5 border border-emerald-500/15 rounded-xl px-4 py-3 mb-4">
                 <p className="text-emerald-400 text-sm font-medium mb-1">Offer Cash for Keys</p>
@@ -1269,17 +1335,17 @@ function PayOrQuitModal({
                   onClick={() => handleSendSms("cash_for_keys")}
                   disabled={sendingSms || !hasPhone}
                   className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                  title={!hasPhone ? "No phone number on file" : undefined}
                 >
                   <Send size={13} />
                   {sendingSms ? "Sending…" : "Send CFK Offer SMS"}
                 </button>
               </div>
-              {!hasPhone && (
-                <p className="text-orange-400/70 text-[10px] mt-2 text-center">No phone number on file — action will be logged only</p>
-              )}
+              {!hasPhone && <p className="text-orange-400/70 text-[10px] mt-2 text-center">No phone on file — action will be logged only</p>}
             </div>
-          ) : (
+          )}
+
+          {/* Pay or Quit tab (original content) — shown when: no tabs (single month) OR poq tab active */}
+          {(!showCfkTab || activeTab === "poq") && (
             <>
           {/* State notice type */}
           {rule ? (
