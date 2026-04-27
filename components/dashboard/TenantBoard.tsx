@@ -604,7 +604,7 @@ function PortfolioSummaryStrip({ stats }: { stats: PortfolioStats }) {
 
 // ── FilterBar ─────────────────────────────────────────────────────────────────
 
-type FilterKey = "all" | "needs_review" | "queued" | "sent" | "paused"
+type FilterKey = "all" | "needs_review" | "queued" | "sent" | "paused" | "healthy"
 
 const FILTER_TABS: { key: FilterKey; label: string }[] = [
   { key: "all",          label: "All" },
@@ -612,6 +612,7 @@ const FILTER_TABS: { key: FilterKey; label: string }[] = [
   { key: "queued",       label: "Scheduled" },
   { key: "sent",         label: "Sent" },
   { key: "paused",       label: "Paused" },
+  { key: "healthy",      label: "Healthy" },
 ]
 
 function FilterBar({ active, counts, onChange }: {
@@ -2285,6 +2286,8 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
   const [search, setSearch] = useState("")
   const [propertyFilter, setPropertyFilter] = useState("")
   const [activeFilter, setActiveFilter] = useState<FilterKey>("needs_review")
+  const [tierFilter, setTierFilter] = useState<RiskTier | "">("")
+  const [sortBy, setSortBy] = useState<"tier" | "balance" | "name">("tier")
   const [pausedTenants, setPausedTenants] = useState<Set<string>>(new Set())
   const [addingTenant, setAddingTenant] = useState(false)
 
@@ -2300,9 +2303,10 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
     })
   }
 
-  // Apply search + property filter
+  // Apply search + property + tier filter
   let filtered = tenants
   if (propertyFilter) filtered = filtered.filter(t => t.properties?.id === propertyFilter)
+  if (tierFilter) filtered = filtered.filter(t => t.tier === tierFilter)
   if (search) {
     const q = search.toLowerCase()
     filtered = filtered.filter(t =>
@@ -2310,6 +2314,18 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
       t.unit?.toLowerCase().includes(q) ||
       t.email?.toLowerCase().includes(q)
     )
+  }
+
+  // Sort
+  const TIER_ORDER_MAP: Record<string, number> = {
+    legal: 0, pay_or_quit: 1, cash_for_keys: 2, payment_plan: 3, reminder: 4, watch: 5, healthy: 6,
+  }
+  if (sortBy === "balance") {
+    filtered = [...filtered].sort((a, b) => (b.balance_due ?? 0) - (a.balance_due ?? 0))
+  } else if (sortBy === "name") {
+    filtered = [...filtered].sort((a, b) => a.name.localeCompare(b.name))
+  } else {
+    filtered = [...filtered].sort((a, b) => TIER_ORDER_MAP[a.tier] - TIER_ORDER_MAP[b.tier])
   }
 
   // Compute auto status for every tenant
@@ -2325,6 +2341,7 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
     queued:       filtered.filter(t => autoStatusMap.get(t.id) === "queued").length,
     sent:         filtered.filter(t => autoStatusMap.get(t.id) === "sent").length,
     paused:       filtered.filter(t => autoStatusMap.get(t.id) === "paused").length,
+    healthy:      filtered.filter(t => t.tier === "healthy").length,
   }
 
   // Portfolio stats for summary strip
@@ -2346,9 +2363,10 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
   }
 
   // Apply automation status filter to tenant list
-  // "All" excludes healthy and paused — paused only surfaces under the Paused tab
   const visibleTenants = activeFilter === "all"
     ? filtered.filter(t => t.tier !== "healthy" && autoStatusMap.get(t.id) !== "paused")
+    : activeFilter === "healthy"
+    ? filtered.filter(t => t.tier === "healthy")
     : filtered.filter(t => autoStatusMap.get(t.id) === activeFilter)
 
   const byTier = (tier: RiskTier) => visibleTenants.filter(t => t.tier === tier)
@@ -2403,6 +2421,16 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
             )}
           </div>
 
+          <select
+            value={sortBy}
+            onChange={e => setSortBy(e.target.value as typeof sortBy)}
+            className="bg-[#111827] border border-white/10 text-white text-sm rounded-xl px-3 py-2 focus:outline-none focus:border-white/20"
+          >
+            <option value="tier">Sort: Risk tier</option>
+            <option value="balance">Sort: Balance ↓</option>
+            <option value="name">Sort: Name A–Z</option>
+          </select>
+
           {properties.length > 1 && (
             <select
               value={propertyFilter}
@@ -2434,9 +2462,44 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
       <PortfolioSummaryStrip stats={portfolioStats} />
 
       {/* Filter bar */}
-      <div className="mb-8">
-        <FilterBar active={activeFilter} counts={counts} onChange={setActiveFilter} />
+      <div className="mb-4">
+        <FilterBar active={activeFilter} counts={counts} onChange={f => { setActiveFilter(f); setTierFilter("") }} />
       </div>
+
+      {/* Tier chips — quick-filter to a single tier */}
+      {activeFilter === "all" && (
+        <div className="flex items-center gap-2 mb-6 flex-wrap">
+          {(["legal","pay_or_quit","cash_for_keys","payment_plan","reminder","watch"] as RiskTier[])
+            .filter(tier => filtered.some(t => t.tier === tier))
+            .map(tier => {
+              const cfg = TIER_CONFIG[tier]
+              const active = tierFilter === tier
+              return (
+                <button
+                  key={tier}
+                  onClick={() => setTierFilter(active ? "" : tier)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${
+                    active
+                      ? `${cfg.badgeStyle || "bg-white/10 border-white/20"} ${cfg.textColor}`
+                      : "border-white/5 text-[#4b5563] hover:text-[#9ca3af] hover:border-white/10"
+                  }`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+                  {cfg.label}
+                  <span className="tabular-nums opacity-60">{filtered.filter(t => t.tier === tier).length}</span>
+                </button>
+              )
+            })}
+          {tierFilter && (
+            <button
+              onClick={() => setTierFilter("")}
+              className="flex items-center gap-1 text-xs text-[#4b5563] hover:text-white transition-colors"
+            >
+              <X size={11} /> Clear
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Empty state — no tenants at all */}
       {filtered.length === 0 && (
@@ -2498,13 +2561,21 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
         />
       ))}
 
-      {/* Healthy summary row */}
+      {/* Healthy summary row — shown at bottom of non-healthy views */}
       {healthy.length > 0 && (activeFilter === "all" || activeFilter === "sent" || activeFilter === "paused") && (
-        <div className="flex items-center gap-2 mt-2 px-1 py-4 border-t border-white/5">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-          <span className="text-[#4b5563] text-sm">
-            {healthy.length} tenant{healthy.length !== 1 ? "s" : ""} on track — system monitoring, no action required
-          </span>
+        <div className="flex items-center justify-between mt-2 px-1 py-4 border-t border-white/5">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+            <span className="text-[#4b5563] text-sm">
+              {healthy.length} tenant{healthy.length !== 1 ? "s" : ""} on track — no action required
+            </span>
+          </div>
+          <button
+            onClick={() => setActiveFilter("healthy")}
+            className="text-xs text-[#4b5563] hover:text-white transition-colors"
+          >
+            View all →
+          </button>
         </div>
       )}
 
@@ -2516,6 +2587,53 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
           </div>
           <p className="text-white font-semibold mb-1">System is running — all {healthy.length} tenants on track</p>
           <p className="text-[#6b7280] text-sm">No action required. Automation will alert you if anything changes.</p>
+        </div>
+      )}
+
+      {/* Healthy tab — full list */}
+      {activeFilter === "healthy" && (
+        <div className="bg-[#111827] border border-white/10 rounded-2xl overflow-hidden">
+          {visibleTenants.length === 0 ? (
+            <div className="p-10 text-center text-[#4b5563] text-sm">No healthy tenants match your filters.</div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-[#4b5563] text-xs uppercase tracking-wide border-b border-white/5">
+                  <th className="px-5 py-3 text-left">Tenant</th>
+                  <th className="px-5 py-3 text-left">Unit</th>
+                  <th className="px-5 py-3 text-left">Property</th>
+                  <th className="px-5 py-3 text-left">Rent</th>
+                  <th className="px-5 py-3 text-left">Last Payment</th>
+                  <th className="px-5 py-3 text-left"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleTenants.map((t, i) => (
+                  <tr key={t.id} className={`border-t border-white/5 hover:bg-white/[0.02] transition-colors ${i === 0 ? "border-t-0" : ""}`}>
+                    <td className="px-5 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-7 h-7 rounded-full ${avatarColor(t.name)} flex items-center justify-center text-white text-xs font-bold shrink-0`}>
+                          {initials(t.name)}
+                        </div>
+                        <span className="text-white font-medium">{t.name}</span>
+                      </div>
+                    </td>
+                    <td className="px-5 py-3 text-[#6b7280] font-mono text-xs">{t.unit}</td>
+                    <td className="px-5 py-3 text-[#6b7280] text-xs">{t.properties?.name ?? "—"}</td>
+                    <td className="px-5 py-3 text-white tabular-nums">${(t.rent_amount ?? 0).toLocaleString()}</td>
+                    <td className="px-5 py-3 text-[#4b5563] text-xs">
+                      {t.last_payment_date ? new Date(t.last_payment_date).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"}
+                    </td>
+                    <td className="px-5 py-3 text-right">
+                      <Link href={`/dashboard/tenants/${t.id}`} className="text-[#4b5563] hover:text-white text-xs transition-colors">
+                        View →
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
     </div>
