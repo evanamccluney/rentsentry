@@ -9,6 +9,14 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect("/login")
 
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("onboarded")
+    .eq("id", user.id)
+    .single()
+
+  if (!profile?.onboarded) redirect("/onboarding")
+
   return (
     <div className="flex h-screen bg-[#0a0e1a] overflow-hidden">
       <Sidebar />
