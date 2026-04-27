@@ -82,7 +82,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
 
   const { data: interventions } = await supabase
     .from("interventions")
-    .select("id, type, sent_at, status, snapshot")
+    .select("id, type, sent_at, status, notes, snapshot")
     .eq("tenant_id", t.id)
     .order("sent_at", { ascending: false })
 

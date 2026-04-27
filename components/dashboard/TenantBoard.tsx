@@ -2380,6 +2380,7 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
     queued:       "No tenants are currently scheduled for automated actions.",
     sent:         "No automated messages sent yet this month.",
     paused:       "No tenant automations are paused.",
+    healthy:      "No healthy tenants match your filters.",
   }
 
   return (

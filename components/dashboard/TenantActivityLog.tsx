@@ -28,6 +28,7 @@ interface Intervention {
   type: string
   sent_at: string
   status: "sent" | "dry_run" | "pending" | string
+  notes?: string | null
   snapshot?: InterventionSnapshot | null
 }
 
