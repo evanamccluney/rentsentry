@@ -10,6 +10,7 @@ import EscalationDecisionBanner from "@/components/dashboard/EscalationDecisionB
 import TenantNotes from "@/components/dashboard/TenantNotes"
 import TenantStatusPicker from "@/components/dashboard/TenantStatusPicker"
 import HardshipButton from "@/components/dashboard/HardshipButton"
+import TenantAIChat from "@/components/dashboard/TenantAIChat"
 
 const TIER_CONFIG: Record<string, { label: string; dot: string; textColor: string; bg: string }> = {
   legal:        { label: "Eviction Recommended",     dot: "bg-red-500",     textColor: "text-red-400",     bg: "bg-red-500/10 border-red-500/20" },
@@ -165,6 +166,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
               <TenantDetailActions tenant={tenantForActions} />
             )}
             <HardshipButton tenantId={t.id} tenantName={t.name} />
+            <TenantAIChat tenantId={t.id} tenantName={t.name} />
           </div>
         </div>
 
