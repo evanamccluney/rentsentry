@@ -1,7 +1,7 @@
 "use client"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { LayoutDashboard, Building2, Users, Zap, CreditCard, LogOut, Settings } from "lucide-react"
+import { LayoutDashboard, Building2, Users, Zap, CreditCard, LogOut, Settings, TrendingUp, CalendarDays } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
@@ -10,6 +10,8 @@ const links = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { href: "/dashboard/tenants", label: "Tenants", icon: Users },
   { href: "/dashboard/properties", label: "Properties", icon: Building2 },
+  { href: "/dashboard/rent-roll", label: "Rent Roll", icon: TrendingUp },
+  { href: "/dashboard/leases", label: "Leases", icon: CalendarDays },
   { href: "/dashboard/utility", label: "Utility Audit", icon: Zap },
   { href: "/dashboard/billing", label: "Billing", icon: CreditCard },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
