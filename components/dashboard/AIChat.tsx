@@ -1,5 +1,6 @@
 "use client"
 import { useState, useRef, useEffect } from "react"
+import { usePathname } from "next/navigation"
 import { X, Send, Sparkles, ChevronDown, AlertTriangle, CheckCircle2, ArrowRight } from "lucide-react"
 import Link from "next/link"
 
@@ -93,6 +94,8 @@ export default function AIChat() {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() }
   }
 
+  const pathname = usePathname()
+  const onTenantsPage = pathname.startsWith("/dashboard/tenants")
   const hasIssues = !!status && status.needs_action > 0
   const urgentCount = status ? (status.breakdown.legal + status.breakdown.pay_or_quit) : 0
 
@@ -213,8 +216,8 @@ export default function AIChat() {
                       )}
                     </div>
 
-                    {/* Quick link to tenants */}
-                    {hasIssues && (
+                    {/* Quick link to tenants — hidden when already there */}
+                    {hasIssues && !onTenantsPage && (
                       <Link
                         href="/dashboard/tenants"
                         className="flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-semibold text-[#9ca3af] bg-white/5 hover:bg-white/10 transition-colors border border-white/5"
@@ -291,12 +294,14 @@ export default function AIChat() {
                     >
                       Urgency order →
                     </button>
-                    <Link
-                      href="/dashboard"
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-[#9ca3af] bg-white/5 hover:bg-white/10 border border-white/5 transition-colors"
-                    >
-                      View Dashboard
-                    </Link>
+                    {pathname !== "/dashboard" && (
+                      <Link
+                        href="/dashboard"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-[#9ca3af] bg-white/5 hover:bg-white/10 border border-white/5 transition-colors"
+                      >
+                        View Dashboard
+                      </Link>
+                    )}
                   </div>
                 )}
 
