@@ -1,8 +1,9 @@
 import { createClient } from "@/lib/supabase/server"
 import { scoreTenant } from "@/lib/risk-engine"
+import { calculateEconomics } from "@/lib/eviction-economics"
 import { notFound } from "next/navigation"
 import Link from "next/link"
-import { ArrowLeft, Scale, HandCoins, Bell, CalendarClock, FileText, CreditCard } from "lucide-react"
+import { ArrowLeft, Scale, HandCoins, Bell, CalendarClock, FileText, CreditCard, TrendingDown, AlertTriangle } from "lucide-react"
 import TenantDetailActions from "@/components/dashboard/TenantDetailActions"
 import TenantActivityLog from "@/components/dashboard/TenantActivityLog"
 import EscalationDecisionBanner from "@/components/dashboard/EscalationDecisionBanner"
@@ -20,11 +21,6 @@ const TIER_CONFIG: Record<string, { label: string; dot: string; textColor: strin
   healthy:      { label: "Healthy",                  dot: "bg-emerald-500", textColor: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
 }
 
-const STATE_EVICTION_WEEKS: Record<string, number> = {
-  TX: 6, AZ: 6, AL: 5, AR: 5, CO: 6, GA: 6, FL: 7, NC: 6, IN: 6, TN: 6,
-  OH: 7, MO: 7, MI: 8, PA: 8, VA: 8, WA: 10, OR: 10, IL: 10, MD: 10, NJ: 12,
-  NY: 16, CA: 20, MA: 16, CT: 14, VT: 20,
-}
 
 const INTERVENTION_LABELS: Record<string, string> = {
   payment_reminder:     "Payment reminder sent",
@@ -102,20 +98,19 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
   const leaseExpiresDays = daysUntil(t.lease_end)
 
   const pmState = (t.properties as any)?.state ?? null
-  const evictionWeeks = pmState ? (STATE_EVICTION_WEEKS[pmState.toUpperCase()] ?? 10) : 10
-  const turnoverWeeks = 4
-  const totalWeeks = evictionWeeks + turnoverWeeks
   const rentAmount = t.rent_amount ?? 0
-  const weeklyRent = Math.round(rentAmount / 4)
-  const litigationCost = Math.round(weeklyRent * evictionWeeks)
-  const turnoverCost = Math.round(weeklyRent * turnoverWeeks)
-  const vacancyCost = litigationCost + turnoverCost
-  const evictionTotal = 1500 + 500 + vacancyCost
-  const cfkMin = Math.round(rentAmount * 0.5)
-  const cfkMax = Math.round(rentAmount * 1.0)
+  const monthsOwed = rentAmount > 0 ? (t.balance_due ?? 0) / rentAmount : 0
+
+  const econ = calculateEconomics({
+    rentAmount,
+    monthsOwed,
+    previousDelinquency: t.previous_delinquency ?? false,
+    latePaymentCount: t.late_payment_count ?? 0,
+    state: pmState,
+  })
+
   const showCostComparison = risk.days_past_due >= 10 && (t.balance_due ?? 0) > 0
 
-  const monthsOwed = rentAmount > 0 ? (t.balance_due ?? 0) / rentAmount : 0
   const showEscalationBanner = monthsOwed >= 2
 
   const tenantForActions = {
@@ -214,7 +209,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
       {showEscalationBanner && (
         <EscalationDecisionBanner
           tenant={tenantForActions}
-          evictionWeeks={evictionWeeks}
+          evictionWeeks={econ.uncontested.lostRentWeeks}
           propertyState={pmState}
         />
       )}
@@ -267,35 +262,118 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
       {/* Cost comparison — Day 10+ delinquent, not already showing escalation banner */}
       {showCostComparison && !showEscalationBanner && (
         <div className="bg-[#111827] border border-orange-500/20 rounded-2xl p-5 mb-5">
-          <h2 className="text-white font-semibold text-sm mb-1">Cost Comparison</h2>
-          <p className="text-[#4b5563] text-xs mb-4">
-            {risk.days_past_due} days past due · {pmState ? `${pmState} eviction timeline: ~${evictionWeeks} weeks in court + ~${turnoverWeeks} weeks turnover` : "Add a state to this property for an accurate estimate"}
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="bg-red-500/5 border border-red-500/15 rounded-xl p-4">
-              <div className="text-[#4b5563] text-xs uppercase tracking-wide mb-2">Eviction (court)</div>
-              <div className="text-red-400 text-2xl font-bold mb-1">~${evictionTotal.toLocaleString()}</div>
-              <div className="text-[#4b5563] text-xs space-y-0.5">
-                <div>Attorney fees: ~$1,500</div>
-                <div>Court costs: ~$500</div>
-                <div>Lost rent during proceedings ({evictionWeeks} wks): ~${litigationCost.toLocaleString()}</div>
-                <div>Vacancy after eviction ({turnoverWeeks} wks): ~${turnoverCost.toLocaleString()}</div>
+          {/* RentSentry recommendation header */}
+          <div className={`flex items-start gap-3 mb-5 p-4 rounded-xl border ${
+            econ.recommendation === "cfk"
+              ? "bg-emerald-500/5 border-emerald-500/20"
+              : "bg-red-500/5 border-red-500/20"
+          }`}>
+            <TrendingDown size={16} className={econ.recommendation === "cfk" ? "text-emerald-400 shrink-0 mt-0.5" : "text-red-400 shrink-0 mt-0.5"} />
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-white font-semibold text-sm">
+                  RentSentry recommends: {econ.recommendation === "cfk" ? "Cash for Keys" : "Pursue Eviction"}
+                </span>
+                <span className={`text-[10px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded ${
+                  econ.recommendationStrength === "strong" ? "bg-white/10 text-white" :
+                  econ.recommendationStrength === "moderate" ? "bg-yellow-500/15 text-yellow-400" :
+                  "bg-white/5 text-[#6b7280]"
+                }`}>
+                  {econ.recommendationStrength === "strong" ? "Strong" : econ.recommendationStrength === "moderate" ? "Moderate" : "Close call"}
+                </span>
               </div>
-              <div className="mt-3 text-[#6b7280] text-xs">Total exposure: ~{totalWeeks} weeks · High risk of property damage</div>
-            </div>
-            <div className="bg-emerald-500/5 border border-emerald-500/15 rounded-xl p-4">
-              <div className="text-[#4b5563] text-xs uppercase tracking-wide mb-2">Cash for Keys</div>
-              <div className="text-emerald-400 text-2xl font-bold mb-1">${cfkMin.toLocaleString()}–${cfkMax.toLocaleString()}</div>
-              <div className="text-[#4b5563] text-xs space-y-0.5">
-                <div>Suggested offer: 50–100% of one month's rent</div>
-                <div>Tenant vacates voluntarily</div>
-                <div>Unit stays in better condition</div>
-              </div>
-              <div className="mt-3 text-[#6b7280] text-xs">Timeline: 3–7 days · Low risk · No court needed</div>
+              <ul className="space-y-1">
+                {econ.reasoning.map((r, i) => (
+                  <li key={i} className="text-[#9ca3af] text-xs flex items-start gap-1.5">
+                    <span className="w-1 h-1 rounded-full bg-[#374151] shrink-0 mt-1.5" />
+                    {r}
+                  </li>
+                ))}
+              </ul>
             </div>
           </div>
-          <p className="text-[#374151] text-xs mt-4">
-            RentSentry will never automatically send legal notices. Review this comparison and decide what&apos;s right for this tenant.
+
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-white font-semibold text-sm">Cost Breakdown</h2>
+            <span className="text-[#4b5563] text-xs">
+              {pmState ? `${pmState} · ~${econ.uncontested.lostRentWeeks}wk uncontested` : "No state set — using national averages"}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+            {/* Eviction column */}
+            <div className="bg-red-500/5 border border-red-500/15 rounded-xl p-4">
+              <div className="text-[#4b5563] text-xs uppercase tracking-wide mb-2">Eviction (court)</div>
+              <div className="text-red-400 text-2xl font-bold mb-3">~${econ.blendedEviction.toLocaleString()}</div>
+              <div className="space-y-1.5 text-xs">
+                {[
+                  { label: "Court filing + service", val: econ.uncontested.courtFee },
+                  { label: "Attorney fees (uncontested)", val: econ.uncontested.attorneyFee },
+                  { label: "Sheriff / lockout fee", val: econ.uncontested.lockoutFee },
+                  { label: `Lost rent (${econ.uncontested.lostRentWeeks} wks in court)`, val: econ.uncontested.lostRent },
+                  { label: `Turnover after eviction (~${econ.uncontested.turnoverWeeks} wks)`, val: econ.uncontested.turnoverCost },
+                  { label: "Damage risk (expected value)", val: econ.uncontested.damagePremium },
+                ].map(({ label, val }) => (
+                  <div key={label} className="flex items-center justify-between text-[#4b5563]">
+                    <span>{label}</span>
+                    <span className="tabular-nums text-[#6b7280]">~${val.toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+              {econ.uncontested.total !== econ.blendedEviction && (
+                <div className="mt-3 pt-2 border-t border-white/5 text-[10px] text-[#374151]">
+                  Includes {Math.round(econ.uncontested ? 0 : 0)}% contested risk premium · contested case: ~${econ.contested.total.toLocaleString()}
+                </div>
+              )}
+              <div className="mt-2 text-[#4b5563] text-[11px]">
+                Timeline: ~{Math.round(econ.uncontested.weeksTotal)} weeks · damage risk: moderate–high
+              </div>
+            </div>
+
+            {/* CFK column */}
+            <div className="bg-emerald-500/5 border border-emerald-500/15 rounded-xl p-4">
+              <div className="text-[#4b5563] text-xs uppercase tracking-wide mb-2">Cash for Keys</div>
+              <div className="text-emerald-400 text-2xl font-bold mb-3">~${econ.cfk.total.toLocaleString()}</div>
+              <div className="space-y-1.5 text-xs">
+                {[
+                  { label: "Cash offer to tenant", val: econ.cfk.offerAmount },
+                  { label: `Lost rent while vacating (~${econ.cfk.vacateWeeks} wks)`, val: econ.cfk.vacateRentLoss },
+                  { label: `Standard turnover (~${econ.cfk.turnoverWeeks} wks)`, val: econ.cfk.turnoverCost },
+                  { label: "Damage risk", val: 0, note: "Near zero — tenant motivated to leave clean" },
+                ].map(({ label, val, note }) => (
+                  <div key={label} className="flex items-center justify-between text-[#4b5563]">
+                    <span>{label}</span>
+                    <span className="tabular-nums text-[#6b7280]">{val === 0 && note ? <span className="text-emerald-600 text-[10px]">{note}</span> : `~$${val.toLocaleString()}`}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-2 text-[#4b5563] text-[11px]">
+                Timeline: ~{Math.round(econ.cfk.weeksTotal)} weeks · damage risk: low
+              </div>
+              <div className="mt-2 text-[10px] text-[#374151]">
+                Max offer where CFK still saves money: <span className="text-white">${econ.breakEvenOffer.toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+
+          {econ.cfkSavings > 0 ? (
+            <div className="flex items-center gap-2 bg-emerald-500/8 border border-emerald-500/15 rounded-lg px-3 py-2 mb-3">
+              <AlertTriangle size={12} className="text-emerald-400 shrink-0" />
+              <span className="text-emerald-400 text-xs font-medium">
+                CFK saves an estimated <span className="font-bold">${econ.cfkSavings.toLocaleString()}</span> vs eviction — max viable offer is ${econ.breakEvenOffer.toLocaleString()}
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 bg-red-500/8 border border-red-500/15 rounded-lg px-3 py-2 mb-3">
+              <AlertTriangle size={12} className="text-red-400 shrink-0" />
+              <span className="text-red-400 text-xs font-medium">
+                Eviction may cost less than CFK in this situation — review carefully
+              </span>
+            </div>
+          )}
+
+          <p className="text-[#374151] text-xs">
+            Estimates based on {pmState ?? "national"} averages. Attorney fees and timelines vary. RentSentry never auto-sends legal notices — you review every action.
           </p>
         </div>
       )}
