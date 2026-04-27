@@ -7,6 +7,7 @@ import TenantDetailActions from "@/components/dashboard/TenantDetailActions"
 import TenantActivityLog from "@/components/dashboard/TenantActivityLog"
 import EscalationDecisionBanner from "@/components/dashboard/EscalationDecisionBanner"
 import TenantNotes from "@/components/dashboard/TenantNotes"
+import TenantStatusPicker from "@/components/dashboard/TenantStatusPicker"
 
 const TIER_CONFIG: Record<string, { label: string; dot: string; textColor: string; bg: string }> = {
   legal:        { label: "Eviction Recommended",     dot: "bg-red-500",     textColor: "text-red-400",     bg: "bg-red-500/10 border-red-500/20" },
@@ -69,7 +70,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
       rent_amount, balance_due, rent_due_day,
       days_late_avg, late_payment_count, previous_delinquency,
       card_expiry, payment_method, last_payment_date,
-      lease_start, lease_end, move_in_date, notes,
+      lease_start, lease_end, move_in_date, notes, resolution_status,
       properties(name, id, state)
     `)
     .eq("id", id)
@@ -169,10 +170,13 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
           )}
         </div>
 
-        {/* Risk tier badge */}
-        <div className={`inline-flex items-center gap-2 mt-4 px-3 py-1.5 rounded-lg border text-sm font-medium ${tierCfg.bg} ${tierCfg.textColor}`}>
-          <span className={`w-2 h-2 rounded-full ${tierCfg.dot}`} />
-          {tierCfg.label}
+        {/* Risk tier badge + status picker */}
+        <div className="flex items-center gap-3 mt-4 flex-wrap">
+          <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium ${tierCfg.bg} ${tierCfg.textColor}`}>
+            <span className={`w-2 h-2 rounded-full ${tierCfg.dot}`} />
+            {tierCfg.label}
+          </div>
+          <TenantStatusPicker tenantId={t.id} initialStatus={(t as any).resolution_status ?? null} />
         </div>
 
         {/* Risk reasons */}

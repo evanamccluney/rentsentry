@@ -1,5 +1,5 @@
 "use client"
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { parseCSV, detectColumns, detectHistoryColumns, isHistoricalCSV, aggregateHistoricalRows, mapRow, type MappedTenant } from "@/lib/csv-parser"
 import { scoreTenant } from "@/lib/risk-engine"
@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
 import { Upload, CheckCircle, AlertTriangle, RefreshCw } from "lucide-react"
 
+type ExistingProperty = { id: string; name: string; state: string | null }
 type Step = "upload" | "mapping" | "preview" | "importing" | "done"
 
 type ChangeType = "paid" | "improved" | "worsened" | "new" | "unchanged"
@@ -49,6 +50,27 @@ export default function UploadPage() {
   const [changeMap, setChangeMap] = useState<Map<string, ChangeInfo>>(new Map())
   const [importedCount, setImportedCount] = useState(0)
   const [defaultRent, setDefaultRent] = useState("")
+  const [existingProperties, setExistingProperties] = useState<ExistingProperty[]>([])
+  const [selectedPropertyId, setSelectedPropertyId] = useState<string>("__new__")
+
+  useEffect(() => {
+    async function loadProperties() {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      const { data } = await supabase
+        .from("properties")
+        .select("id, name, state")
+        .eq("user_id", user.id)
+        .order("name")
+      if (data && data.length > 0) {
+        setExistingProperties(data)
+        setSelectedPropertyId(data[0].id)
+        setPropertyName(data[0].name)
+      }
+    }
+    loadProperties()
+  }, [])
 
   const handleFile = useCallback((file: File) => {
     const reader = new FileReader()
@@ -88,7 +110,7 @@ export default function UploadPage() {
   }
 
   async function buildPreview() {
-    if (!propertyName.trim()) { toast.error("Enter a property name."); return }
+    if (selectedPropertyId === "__new__" && !propertyName.trim()) { toast.error("Enter a property name."); return }
 
     // Fetch existing balances for this property to detect what changed
     const supabase = createClient()
@@ -96,12 +118,18 @@ export default function UploadPage() {
     const newChangeMap = new Map<string, ChangeInfo>()
 
     if (user) {
-      const { data: existingProp } = await supabase
-        .from("properties")
-        .select("id")
-        .eq("user_id", user.id)
-        .ilike("name", propertyName.trim())
-        .maybeSingle()
+      let existingProp: { id: string } | null = null
+      if (selectedPropertyId !== "__new__") {
+        existingProp = { id: selectedPropertyId }
+      } else {
+        const { data } = await supabase
+          .from("properties")
+          .select("id")
+          .eq("user_id", user.id)
+          .ilike("name", propertyName.trim())
+          .maybeSingle()
+        existingProp = data
+      }
 
       if (existingProp) {
         const { data: existingTenants } = await supabase
@@ -161,29 +189,35 @@ export default function UploadPage() {
 
     setStep("importing")
 
-    // Find or auto-create the property by name
-    const { data: existing } = await supabase
-      .from("properties")
-      .select("id")
-      .eq("user_id", user.id)
-      .ilike("name", propertyName.trim())
-      .maybeSingle()
+    // Use selected property or create new one
+    let resolvedPropertyId: string | undefined
 
-    let resolvedPropertyId = existing?.id
-
-    if (!resolvedPropertyId) {
-      const { data: created, error: createError } = await supabase
+    if (selectedPropertyId !== "__new__") {
+      resolvedPropertyId = selectedPropertyId
+    } else {
+      const { data: existing } = await supabase
         .from("properties")
-        .insert({ user_id: user.id, name: propertyName.trim() })
         .select("id")
-        .single()
+        .eq("user_id", user.id)
+        .ilike("name", propertyName.trim())
+        .maybeSingle()
 
-      if (createError || !created) {
-        toast.error("Could not create property.")
-        setStep("preview")
-        return
+      resolvedPropertyId = existing?.id
+
+      if (!resolvedPropertyId) {
+        const { data: created, error: createError } = await supabase
+          .from("properties")
+          .insert({ user_id: user.id, name: propertyName.trim() })
+          .select("id")
+          .single()
+
+        if (createError || !created) {
+          toast.error("Could not create property.")
+          setStep("preview")
+          return
+        }
+        resolvedPropertyId = created.id
       }
-      resolvedPropertyId = created.id
     }
 
     // Delete only the units present in this CSV (preserves tenants not in this upload)
@@ -397,18 +431,45 @@ export default function UploadPage() {
           </div>
           <p className="text-[#9ca3af] text-sm mb-6">Review the detected column mapping. Adjust any that are incorrect.</p>
 
-          {/* Property name */}
+          {/* Property selection */}
           <div className="mb-6 pb-6 border-b border-[#1e2d45]">
-            <label className="text-white font-medium text-sm block mb-2">Property name</label>
-            <input
-              value={propertyName}
-              onChange={e => setPropertyName(e.target.value)}
-              placeholder="e.g. Oakwood Apartments"
-              className="w-full max-w-sm bg-[#0a0e1a] border border-[#1e2d45] text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-[#60a5fa]"
-            />
-            <p className="text-[#4b5563] text-xs mt-1.5">
-              If this property already exists in RentSentry it will be matched automatically. Otherwise it will be created.
-            </p>
+            <label className="text-white font-medium text-sm block mb-2">Property</label>
+            {existingProperties.length > 0 ? (
+              <div className="space-y-2">
+                <select
+                  value={selectedPropertyId}
+                  onChange={e => {
+                    setSelectedPropertyId(e.target.value)
+                    if (e.target.value !== "__new__") {
+                      const p = existingProperties.find(p => p.id === e.target.value)
+                      if (p) setPropertyName(p.name)
+                    }
+                  }}
+                  className="w-full max-w-sm bg-[#0a0e1a] border border-[#1e2d45] text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-[#60a5fa]"
+                >
+                  {existingProperties.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}{p.state ? ` (${p.state})` : ""}</option>
+                  ))}
+                  <option value="__new__">+ Create new property…</option>
+                </select>
+                {selectedPropertyId === "__new__" && (
+                  <input
+                    value={propertyName}
+                    onChange={e => setPropertyName(e.target.value)}
+                    placeholder="New property name"
+                    autoFocus
+                    className="w-full max-w-sm bg-[#0a0e1a] border border-[#1e2d45] text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-[#60a5fa]"
+                  />
+                )}
+              </div>
+            ) : (
+              <input
+                value={propertyName}
+                onChange={e => setPropertyName(e.target.value)}
+                placeholder="e.g. Oakwood Apartments"
+                className="w-full max-w-sm bg-[#0a0e1a] border border-[#1e2d45] text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-[#60a5fa]"
+              />
+            )}
           </div>
 
           {/* Re-upload toggle */}

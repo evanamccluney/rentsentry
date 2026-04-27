@@ -35,7 +35,14 @@ export default function OnboardingPage() {
         .select("onboarded")
         .eq("id", user.id)
         .single()
-      if (profile?.onboarded) router.push("/dashboard")
+      if (profile?.onboarded) { router.push("/dashboard"); return }
+      // If they already created a property, skip step 2
+      const { data: props } = await supabase
+        .from("properties")
+        .select("id")
+        .eq("user_id", user.id)
+        .limit(1)
+      if (props && props.length > 0) setStep(3)
     }
     checkAlreadyOnboarded()
   }, [])
@@ -94,13 +101,13 @@ export default function OnboardingPage() {
     }
   }
 
-  function goToDashboard() {
-    markOnboarded()
+  async function goToDashboard() {
+    await markOnboarded()
     router.push("/dashboard")
   }
 
-  function goToUpload() {
-    markOnboarded()
+  async function goToUpload() {
+    await markOnboarded()
     router.push("/dashboard/upload")
   }
 
