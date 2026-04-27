@@ -1,6 +1,6 @@
 "use client"
 import { useState, useRef, useEffect } from "react"
-import { X, Send, Sparkles, ChevronDown, AlertTriangle, CheckCircle2, Zap, ArrowRight } from "lucide-react"
+import { X, Send, Sparkles, ChevronDown, AlertTriangle, CheckCircle2, ArrowRight } from "lucide-react"
 import Link from "next/link"
 
 interface Message {
@@ -213,25 +213,14 @@ export default function AIChat() {
                       )}
                     </div>
 
-                    {/* I can handle this for you */}
+                    {/* Quick link to tenants */}
                     {hasIssues && (
-                      <div>
-                        <div className="text-[#4b5563] text-xs mb-2">I can handle this for you:</div>
-                        <div className="flex gap-2">
-                          <Link
-                            href="/dashboard/tenants"
-                            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-semibold text-white bg-blue-500 hover:bg-blue-600 transition-colors"
-                          >
-                            <Zap size={13} /> Run Recommended
-                          </Link>
-                          <Link
-                            href="/dashboard/tenants"
-                            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-semibold text-[#9ca3af] bg-white/5 hover:bg-white/10 transition-colors border border-white/5"
-                          >
-                            Review First <ArrowRight size={13} />
-                          </Link>
-                        </div>
-                      </div>
+                      <Link
+                        href="/dashboard/tenants"
+                        className="flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-semibold text-[#9ca3af] bg-white/5 hover:bg-white/10 transition-colors border border-white/5"
+                      >
+                        Review tenants <ArrowRight size={13} />
+                      </Link>
                     )}
 
                     {/* Quick questions */}
@@ -293,15 +282,9 @@ export default function AIChat() {
                   </div>
                 )}
 
-                {/* Persistent action buttons after last AI response */}
+                {/* Follow-up prompt shortcuts */}
                 {!loading && messages[messages.length - 1]?.role === "assistant" && (
                   <div className="flex flex-wrap gap-2 pt-1 border-t border-white/5">
-                    <Link
-                      href="/dashboard/tenants"
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-[#60a5fa] bg-[#60a5fa]/10 hover:bg-[#60a5fa]/20 border border-[#60a5fa]/20 transition-colors"
-                    >
-                      <Zap size={11} /> Execute Action
-                    </Link>
                     <button
                       onClick={() => send("What should I do right now, in order of urgency?")}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-[#9ca3af] bg-white/5 hover:bg-white/10 border border-white/5 transition-colors"
