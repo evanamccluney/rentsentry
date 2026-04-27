@@ -209,7 +209,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
       {showEscalationBanner && (
         <EscalationDecisionBanner
           tenant={tenantForActions}
-          evictionWeeks={econ.uncontested.lostRentWeeks}
+          econ={econ}
           propertyState={pmState}
         />
       )}

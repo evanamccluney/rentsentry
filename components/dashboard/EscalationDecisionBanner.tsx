@@ -1,7 +1,8 @@
 "use client"
 import { useState } from "react"
 import { toast } from "sonner"
-import { AlertTriangle, HandCoins, Scale, X, Send } from "lucide-react"
+import { AlertTriangle, HandCoins, Scale, X, Send, TrendingDown } from "lucide-react"
+import type { EconomicsResult } from "@/lib/eviction-economics"
 
 const SMS_PREVIEWS: Record<string, (name: string) => string> = {
   cash_for_keys: (name) =>
@@ -30,58 +31,17 @@ interface Props {
     property_name?: string | null
     recommended_action: string
   }
-  evictionWeeks: number
+  econ: EconomicsResult
   propertyState: string | null
 }
 
-function computeRecommendation(
-  evictionWeeks: number,
-  repeatOffender: boolean,
-  monthsOwed: number,
-  propertyState: string | null
-): { action: "cash_for_keys" | "legal_packet"; headline: string; reasoning: string } {
-  const slowState = evictionWeeks >= 12
-  const months = Math.round(monthsOwed * 10) / 10
-
-  if (monthsOwed >= 3 && repeatOffender) {
-    return {
-      action: "legal_packet",
-      headline: "File for Eviction (UD)",
-      reasoning: `At ${months} months overdue with a prior delinquency on record, voluntary resolution is unlikely. Filing Unlawful Detainer is the most cost-effective path — every additional week adds more unpaid rent with low probability of recovery.`,
-    }
-  }
-
-  if (slowState && !repeatOffender) {
-    return {
-      action: "cash_for_keys",
-      headline: "Offer Cash for Keys",
-      reasoning: `${propertyState ? `${propertyState}'s` : "Your state's"} eviction process averages ~${evictionWeeks} weeks in court. A Cash for Keys offer (50–100% of one month's rent) will resolve this faster and cheaper than filing — and leaves the unit in better condition.`,
-    }
-  }
-
-  if (repeatOffender) {
-    return {
-      action: "legal_packet",
-      headline: "File for Eviction (UD)",
-      reasoning: `With a prior delinquency on record and ${months} months unpaid, this tenant has shown they won't self-correct. Filing Unlawful Detainer starts the legal clock and protects your position for a future court date.`,
-    }
-  }
-
-  // Default: CFK (cheaper, faster, first-time situation)
-  return {
-    action: "cash_for_keys",
-    headline: "Offer Cash for Keys",
-    reasoning: `At ${months} months overdue with no prior delinquency, Cash for Keys is the fastest path to recovering the unit. Court costs and lost rent during a ${evictionWeeks}-week eviction will likely exceed a reasonable offer — and removes the uncertainty of a contested case.`,
-  }
-}
-
-export default function EscalationDecisionBanner({ tenant, evictionWeeks, propertyState }: Props) {
+export default function EscalationDecisionBanner({ tenant, econ, propertyState }: Props) {
   const [pendingAction, setPendingAction] = useState<"cash_for_keys" | "legal_packet" | null>(null)
   const [loading, setLoading] = useState(false)
 
   const monthsOwed = tenant.rent_amount > 0 ? tenant.balance_due / tenant.rent_amount : 0
-  const repeatOffender = tenant.previous_delinquency || tenant.late_payment_count >= 5
-  const rec = computeRecommendation(evictionWeeks, repeatOffender, monthsOwed, propertyState)
+  const recAction: "cash_for_keys" | "legal_packet" = econ.recommendation === "cfk" ? "cash_for_keys" : "legal_packet"
+  const recHeadline = econ.recommendation === "cfk" ? "Offer Cash for Keys" : "File for Eviction (UD)"
 
   function buildSnapshot(actionType: string) {
     return {
@@ -201,11 +161,60 @@ export default function EscalationDecisionBanner({ tenant, evictionWeeks, proper
           </div>
         </div>
 
+        {/* Economics summary strip */}
+        <div className="grid grid-cols-3 gap-2 mb-4">
+          <div className="bg-red-500/8 border border-red-500/15 rounded-xl px-3 py-2.5 text-center">
+            <div className="text-[#4b5563] text-[10px] uppercase tracking-wide mb-1">Eviction cost</div>
+            <div className="text-red-400 font-bold tabular-nums text-sm">~${econ.blendedEviction.toLocaleString()}</div>
+            <div className="text-[#374151] text-[10px] mt-0.5">~{econ.uncontested.lostRentWeeks} wk timeline</div>
+          </div>
+          <div className="bg-emerald-500/8 border border-emerald-500/15 rounded-xl px-3 py-2.5 text-center">
+            <div className="text-[#4b5563] text-[10px] uppercase tracking-wide mb-1">Cash for Keys</div>
+            <div className="text-emerald-400 font-bold tabular-nums text-sm">~${econ.cfk.total.toLocaleString()}</div>
+            <div className="text-[#374151] text-[10px] mt-0.5">~{econ.cfk.weeksTotal} wk timeline</div>
+          </div>
+          <div className={`rounded-xl px-3 py-2.5 text-center border ${econ.cfkSavings > 0 ? "bg-white/5 border-white/10" : "bg-red-500/8 border-red-500/15"}`}>
+            <div className="text-[#4b5563] text-[10px] uppercase tracking-wide mb-1">CFK saves</div>
+            <div className={`font-bold tabular-nums text-sm ${econ.cfkSavings > 0 ? "text-white" : "text-red-400"}`}>
+              {econ.cfkSavings > 0 ? `$${econ.cfkSavings.toLocaleString()}` : "—"}
+            </div>
+            <div className="text-[#374151] text-[10px] mt-0.5">
+              {econ.cfkSavings > 0 ? `max offer $${econ.breakEvenOffer.toLocaleString()}` : "eviction cheaper"}
+            </div>
+          </div>
+        </div>
+
         {/* Recommendation */}
-        <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl px-4 py-3 mb-4">
-          <div className="text-[#4b5563] text-xs uppercase tracking-wide mb-1.5">RentSentry recommends</div>
-          <p className="text-white text-sm font-semibold mb-1.5">{rec.headline}</p>
-          <p className="text-[#9ca3af] text-sm leading-relaxed">{rec.reasoning}</p>
+        <div className={`border rounded-xl px-4 py-3 mb-4 ${
+          econ.recommendation === "cfk"
+            ? "bg-emerald-500/5 border-emerald-500/20"
+            : "bg-red-500/5 border-red-500/20"
+        }`}>
+          <div className="flex items-center gap-2 mb-2">
+            <TrendingDown size={13} className={econ.recommendation === "cfk" ? "text-emerald-400 shrink-0" : "text-red-400 shrink-0"} />
+            <div className="text-[#4b5563] text-xs uppercase tracking-wide">RentSentry recommends</div>
+            <span className={`text-[10px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded ${
+              econ.recommendationStrength === "strong" ? "bg-white/10 text-white" :
+              econ.recommendationStrength === "moderate" ? "bg-yellow-500/15 text-yellow-400" :
+              "bg-white/5 text-[#6b7280]"
+            }`}>
+              {econ.recommendationStrength === "strong" ? "Strong" : econ.recommendationStrength === "moderate" ? "Moderate" : "Close call"}
+            </span>
+          </div>
+          <p className="text-white text-sm font-semibold mb-2">{recHeadline}</p>
+          <ul className="space-y-1">
+            {econ.reasoning.map((r, i) => (
+              <li key={i} className="text-[#9ca3af] text-xs flex items-start gap-1.5">
+                <span className="w-1 h-1 rounded-full bg-[#374151] shrink-0 mt-1.5" />
+                {r}
+              </li>
+            ))}
+          </ul>
+          {econ.recommendation === "cfk" && (
+            <div className="mt-2 text-[#4b5563] text-[11px]">
+              {propertyState ?? "National avg"} · max viable CFK offer: <span className="text-white font-medium">${econ.breakEvenOffer.toLocaleString()}</span>
+            </div>
+          )}
         </div>
 
         {/* Action buttons */}
@@ -213,34 +222,34 @@ export default function EscalationDecisionBanner({ tenant, evictionWeeks, proper
           <button
             onClick={() => setPendingAction("cash_for_keys")}
             className={`flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-semibold border transition-colors ${
-              rec.action === "cash_for_keys"
+              recAction === "cash_for_keys"
                 ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/25"
                 : "bg-white/5 border-white/10 text-[#9ca3af] hover:bg-white/10 hover:text-white"
             }`}
           >
             <HandCoins size={15} />
             Offer Cash for Keys
-            {rec.action === "cash_for_keys" && (
+            {recAction === "cash_for_keys" && (
               <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-full ml-1">Recommended</span>
             )}
           </button>
           <button
             onClick={() => setPendingAction("legal_packet")}
             className={`flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-sm font-semibold border transition-colors ${
-              rec.action === "legal_packet"
+              recAction === "legal_packet"
                 ? "bg-red-500/15 border-red-500/40 text-red-300 hover:bg-red-500/25"
                 : "bg-white/5 border-white/10 text-[#9ca3af] hover:bg-white/10 hover:text-white"
             }`}
           >
             <Scale size={15} />
             Prepare UD Filing
-            {rec.action === "legal_packet" && (
+            {recAction === "legal_packet" && (
               <span className="text-[10px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded-full ml-1">Recommended</span>
             )}
           </button>
         </div>
         <p className="text-[#374151] text-xs mt-3">
-          RentSentry never auto-sends legal notices. You review and approve every action.
+          Estimates based on {propertyState ?? "national"} averages. RentSentry never auto-sends legal notices — you review every action.
         </p>
       </div>
     </>
