@@ -8,6 +8,7 @@ import TenantActivityLog from "@/components/dashboard/TenantActivityLog"
 import EscalationDecisionBanner from "@/components/dashboard/EscalationDecisionBanner"
 import TenantNotes from "@/components/dashboard/TenantNotes"
 import TenantStatusPicker from "@/components/dashboard/TenantStatusPicker"
+import HardshipButton from "@/components/dashboard/HardshipButton"
 
 const TIER_CONFIG: Record<string, { label: string; dot: string; textColor: string; bg: string }> = {
   legal:        { label: "Eviction Recommended",     dot: "bg-red-500",     textColor: "text-red-400",     bg: "bg-red-500/10 border-red-500/20" },
@@ -164,10 +165,12 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
               </div>
             </div>
           </div>
-          {/* Hide the default SMS button when the escalation banner handles actions */}
-          {!showEscalationBanner && (
-            <TenantDetailActions tenant={tenantForActions} />
-          )}
+          <div className="flex items-center gap-2 flex-wrap">
+            {!showEscalationBanner && (
+              <TenantDetailActions tenant={tenantForActions} />
+            )}
+            <HardshipButton tenantId={t.id} tenantName={t.name} />
+          </div>
         </div>
 
         {/* Risk tier badge + status picker */}

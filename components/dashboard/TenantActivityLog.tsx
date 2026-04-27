@@ -1,6 +1,6 @@
 "use client"
 import { useState } from "react"
-import { Clock, ChevronDown, ChevronRight, Scale, Zap } from "lucide-react"
+import { Clock, ChevronDown, ChevronRight, Scale, Zap, Heart } from "lucide-react"
 
 interface InterventionSnapshot {
   tier: string
@@ -31,7 +31,15 @@ interface Intervention {
   snapshot?: InterventionSnapshot | null
 }
 
+const HARDSHIP_TYPE_LABELS: Record<string, string> = {
+  job_loss:         "Job loss / income drop",
+  medical:          "Medical emergency",
+  family_emergency: "Family emergency",
+  other:            "Other hardship",
+}
+
 const INTERVENTION_LABELS: Record<string, string> = {
+  hardship_checkin: "Hardship check-in logged",
   payment_reminder:     "Payment reminder sent",
   proactive_reminder:   "Proactive reminder sent",
   payment_method_alert:        "Payment method alert sent",
@@ -145,6 +153,47 @@ function SnapshotCard({ s }: { s: InterventionSnapshot }) {
   )
 }
 
+function HardshipEntry({ entry, isLast }: { entry: Intervention; isLast: boolean }) {
+  const s = entry.snapshot as { hardship_type?: string; grace_agreed?: boolean; grace_until?: string; promised_amount?: number } | null
+  const hardshipLabel = s?.hardship_type ? (HARDSHIP_TYPE_LABELS[s.hardship_type] ?? s.hardship_type) : "Hardship"
+
+  return (
+    <div className="flex gap-3 relative">
+      {!isLast && (
+        <div className="absolute left-3.5 top-7 bottom-0 w-px bg-white/5" />
+      )}
+      <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 z-10 mt-0.5 bg-blue-500/10 border border-blue-500/20">
+        <Heart size={11} className="text-blue-400" />
+      </div>
+      <div className="pb-4 min-w-0 flex-1">
+        <div className="text-sm text-[#d1d5db] leading-snug">
+          Hardship check-in logged — <span className="text-blue-300">{hardshipLabel}</span>
+        </div>
+        <div className="text-[#4b5563] text-xs mt-0.5">{formatDateTime(entry.sent_at)}</div>
+        {entry.notes && (
+          <div className="mt-2 bg-[#0d1117] border border-white/5 rounded-xl px-3 py-2.5 text-[#9ca3af] text-xs leading-relaxed">
+            {entry.notes}
+          </div>
+        )}
+        {s?.grace_agreed && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {s.grace_until && (
+              <span className="text-xs bg-blue-500/10 border border-blue-500/20 text-blue-300 px-2 py-0.5 rounded-md">
+                Grace until {new Date(s.grace_until).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+              </span>
+            )}
+            {s.promised_amount && (
+              <span className="text-xs bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-md">
+                Promised ${s.promised_amount.toLocaleString()}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function ActivityEntry({ entry, isLast }: { entry: Intervention; isLast: boolean }) {
   const [expanded, setExpanded] = useState(false)
   const hasSnapshot = !!entry.snapshot
@@ -229,7 +278,9 @@ export default function TenantActivityLog({ interventions }: { interventions: In
   return (
     <div className="space-y-0">
       {interventions.map((a, i) => (
-        <ActivityEntry key={a.id} entry={a} isLast={i === interventions.length - 1} />
+        a.type === "hardship_checkin"
+          ? <HardshipEntry key={a.id} entry={a} isLast={i === interventions.length - 1} />
+          : <ActivityEntry key={a.id} entry={a} isLast={i === interventions.length - 1} />
       ))}
     </div>
   )

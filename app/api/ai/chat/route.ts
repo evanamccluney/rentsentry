@@ -97,6 +97,13 @@ export async function POST(req: NextRequest) {
     .select("*")
     .eq("user_id", user.id)
 
+  const { data: hardships } = await supabase
+    .from("interventions")
+    .select("tenant_id, notes, snapshot, sent_at, tenants(name)")
+    .eq("user_id", user.id)
+    .eq("type", "hardship_checkin")
+    .order("sent_at", { ascending: false })
+
   const now = new Date()
   const firstOfNext = new Date(now.getFullYear(), now.getMonth() + 1, 1)
   const daysUntilRent = Math.ceil((firstOfNext.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
@@ -161,6 +168,20 @@ When a tenant is flagged ⚠️ as 2+ months overdue, recommend either Cash for 
 - First offense, fast state: CFK is usually cheaper and faster
 Always give a dollar reason: compare the CFK offer cost vs eviction + vacancy cost.
 The tenant detail page now shows both action buttons — tell the PM they can choose either from the tenant's page.
+
+ACTIVE HARDSHIP AGREEMENTS:
+${hardships && hardships.length > 0
+  ? hardships.map((h: any) => {
+      const s = h.snapshot as { hardship_type?: string; grace_agreed?: boolean; grace_until?: string; promised_amount?: number } | null
+      const name = h.tenants?.name ?? "Unknown"
+      const type = s?.hardship_type ?? "unknown"
+      const graceStr = s?.grace_agreed && s.grace_until ? ` — grace period until ${s.grace_until}` : ""
+      const promiseStr = s?.promised_amount ? ` — promised $${s.promised_amount}` : ""
+      const logged = new Date(h.sent_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+      return `- ${name}: ${type}${graceStr}${promiseStr} (logged ${logged})${h.notes ? `\n  PM note: "${h.notes}"` : ""}`
+    }).join("\n")
+  : "None logged."}
+Factor hardship agreements into your advice — do not recommend escalation during an active grace period unless the tenant has broken their promise.
 
 ADVICE ROLE:
 - Be direct and concise — this PM needs to act, not read essays
