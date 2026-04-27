@@ -3,6 +3,7 @@ import { useState } from "react"
 import { toast } from "sonner"
 import { AlertTriangle, HandCoins, Scale, X, Send, TrendingDown } from "lucide-react"
 import type { EconomicsResult } from "@/lib/eviction-economics"
+import GenerateCFKLetter from "@/components/dashboard/GenerateCFKLetter"
 
 const SMS_PREVIEWS: Record<string, (name: string) => string> = {
   cash_for_keys: (name) =>
@@ -248,9 +249,18 @@ export default function EscalationDecisionBanner({ tenant, econ, propertyState }
             )}
           </button>
         </div>
-        <p className="text-[#374151] text-xs mt-3">
-          Estimates based on {propertyState ?? "national"} averages. RentSentry never auto-sends legal notices — you review every action.
-        </p>
+        <div className="flex items-center justify-between mt-3">
+          <p className="text-[#374151] text-xs">
+            Estimates based on {propertyState ?? "national"} averages. RentSentry never auto-sends legal notices — you review every action.
+          </p>
+          {recAction === "cash_for_keys" && (
+            <GenerateCFKLetter
+              tenantId={tenant.id}
+              tenantName={tenant.name}
+              defaultOfferAmount={econ.cfk.offerAmount}
+            />
+          )}
+        </div>
       </div>
     </>
   )

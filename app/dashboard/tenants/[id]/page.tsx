@@ -11,6 +11,7 @@ import TenantNotes from "@/components/dashboard/TenantNotes"
 import TenantStatusPicker from "@/components/dashboard/TenantStatusPicker"
 import HardshipButton from "@/components/dashboard/HardshipButton"
 import TenantAIChat from "@/components/dashboard/TenantAIChat"
+import GenerateCFKLetter from "@/components/dashboard/GenerateCFKLetter"
 
 const TIER_CONFIG: Record<string, { label: string; dot: string; textColor: string; bg: string }> = {
   legal:        { label: "Eviction Recommended",     dot: "bg-red-500",     textColor: "text-red-400",     bg: "bg-red-500/10 border-red-500/20" },
@@ -355,6 +356,15 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
               <div className="mt-2 text-[10px] text-[#374151]">
                 Max offer where CFK still saves money: <span className="text-white">${econ.breakEvenOffer.toLocaleString()}</span>
               </div>
+              {econ.recommendation === "cfk" && (
+                <div className="mt-3 pt-2 border-t border-white/5">
+                  <GenerateCFKLetter
+                    tenantId={t.id}
+                    tenantName={t.name}
+                    defaultOfferAmount={econ.cfk.offerAmount}
+                  />
+                </div>
+              )}
             </div>
           </div>
 
