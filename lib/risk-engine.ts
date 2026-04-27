@@ -4,10 +4,10 @@ export type RiskTier =
   | 'healthy'        // No balance, no risk signals
   | 'watch'          // Predictive — act before the 1st
   | 'reminder'       // Day 1-14: first/second offense, gentle nudge
-  | 'payment_plan'   // Day 15-25: some history or time pressure, structure repayment
-  | 'pay_or_quit'    // Day 20-35: legal notice required
-  | 'cash_for_keys'  // Day 35-45: offer cash to vacate vs court
-  | 'legal'          // Day 45+: file Unlawful Detainer
+  | 'payment_plan'   // Day 15-20: some history or time pressure, structure repayment
+  | 'pay_or_quit'    // Day 15-30: legal notice required (NBER: issue by Day 15 for 1+ month owed)
+  | 'cash_for_keys'  // Day 30-45: offer cash to vacate vs court (optimal window per practitioner data)
+  | 'legal'          // Day 45+: file Unlawful Detainer (Day 60+ if 1.5+ months owed)
 
 export interface TenantRiskInput {
   days_late_avg: number
@@ -86,11 +86,14 @@ export function scoreTenant(t: TenantRiskInput): RiskResult {
 
   // ── LEGAL — File Unlawful Detainer ────────────────────────────────────────
   // 3+ months owed regardless of days.
-  // 2+ months owed AND either repeat offender or 45+ days — negotiation is over.
+  // 2+ months owed AND either repeat offender or 45+ days past due.
+  // 1.5+ months owed AND 60+ days past due — two full billing cycles ignored.
+  // Source: NBER (2024), practitioner consensus — file between Day 45–60 max.
   if (
     monthsOwed >= 3 ||
     (monthsOwed >= 2 && repeatOffender) ||
-    (monthsOwed >= 2 && daysPastDue >= 45)
+    (monthsOwed >= 2 && daysPastDue >= 45) ||
+    (monthsOwed >= 1.5 && daysPastDue >= 60)
   ) {
     const reasons: string[] = [
       `${fmt.months} rent outstanding (${fmt.balance})`,
@@ -116,11 +119,12 @@ export function scoreTenant(t: TenantRiskInput): RiskResult {
     }
   }
 
-  // ── CASH FOR KEYS — Day 35-45 ─────────────────────────────────────────────
-  // Offering cash to vacate is cheaper than court when owed 1.5+ months,
-  // OR 1+ month and 45 days have passed (Pay or Quit was likely ignored).
+  // ── CASH FOR KEYS — Day 30-45 ─────────────────────────────────────────────
+  // Optimal CFK window: Day 30–45 (5–7 days after Pay or Quit served at Day 15–20).
+  // Tenant anxiety is highest, no attorney yet, eviction not yet on public record.
+  // Source: RentPrep, BiggerPockets practitioners — "point of no return" at Day 45.
   if (
-    (monthsOwed >= 1.5 && daysPastDue >= 35) ||
+    (monthsOwed >= 1.5 && daysPastDue >= 30) ||
     (monthsOwed >= 1.5 && repeatOffender) ||
     (monthsOwed >= 1 && daysPastDue >= 45)
   ) {
@@ -148,14 +152,14 @@ export function scoreTenant(t: TenantRiskInput): RiskResult {
     }
   }
 
-  // ── PAY OR QUIT — Day 20-35 ───────────────────────────────────────────────
+  // ── PAY OR QUIT — Day 15-30 ───────────────────────────────────────────────
   // Legal notice starts the clock without committing to eviction.
-  // Triggered by a full month owed + time/history, or partial balance with escalating signals.
-  // NOTE: 2+ months owed is always Pay or Quit regardless of daysPastDue — the balance alone
-  // proves non-payment; the exact date tracking is secondary.
+  // Research: issue by Day 15 for 1+ month owed — starts clock, most tenants pay within 3–7 days.
+  // Waiting past Day 20 gives tenants more runway to prepare delay tactics.
+  // Source: NBER (2024), practitioner consensus — "issue Pay or Quit at Day 15."
   if (
     monthsOwed >= 2 ||
-    (monthsOwed >= 1 && daysPastDue >= 20) ||
+    (monthsOwed >= 1 && daysPastDue >= 15) ||
     (monthsOwed >= 1 && repeatOffender) ||
     (balance_due > 0 && daysPastDue >= 25 && (late_payment_count >= 3 || repeatOffender)) ||
     (balance_due > 0 && repeatOffender && daysPastDue >= 15)

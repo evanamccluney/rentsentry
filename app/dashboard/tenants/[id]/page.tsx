@@ -113,7 +113,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
 
   const showCostComparison = risk.days_past_due >= 10 && (t.balance_due ?? 0) > 0
 
-  const showEscalationBanner = monthsOwed >= 2
+  const showEscalationBanner = monthsOwed >= 1.5
 
   const tenantForActions = {
     id: t.id,

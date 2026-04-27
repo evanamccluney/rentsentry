@@ -147,7 +147,7 @@ ${(properties || []).map(p => `- ${p.name}${p.address ? ` (${p.address})` : ""}`
 ALL TENANTS (use IDs when calling tools):
 ${tenantSummary.map(t => {
   const monthsOwed = t.rent > 0 ? t.balance_due / t.rent : 0
-  const escalation = monthsOwed >= 2 ? ` ⚠️ ${Math.round(monthsOwed * 10) / 10} MONTHS OVERDUE — recommend CFK or UD` : ""
+  const escalation = monthsOwed >= 1.5 ? ` ⚠️ ${Math.round(monthsOwed * 10) / 10} MONTHS OVERDUE — recommend CFK or UD` : ""
   return `- [${t.id}] ${t.name} | Unit ${t.unit} | ${t.property ?? "No property"} | Rent $${t.rent} | Balance $${t.balance_due} | Due day: ${t.rent_due_day} | Risk: ${t.risk}${t.flags?.length ? ` | Flags: ${t.flags.join(", ")}` : ""}${escalation}`
 }).join("\n")}
 
