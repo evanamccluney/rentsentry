@@ -5,6 +5,7 @@ import { notFound } from "next/navigation"
 import Link from "next/link"
 import { ArrowLeft, Scale, HandCoins, Bell, CalendarClock, FileText, CreditCard, TrendingDown, AlertTriangle } from "lucide-react"
 import TenantDetailActions from "@/components/dashboard/TenantDetailActions"
+import TenantActionsPanel from "@/components/dashboard/TenantActionsPanel"
 import TenantActivityLog from "@/components/dashboard/TenantActivityLog"
 import EscalationDecisionBanner from "@/components/dashboard/EscalationDecisionBanner"
 import TenantNotes from "@/components/dashboard/TenantNotes"
@@ -12,6 +13,10 @@ import TenantStatusPicker from "@/components/dashboard/TenantStatusPicker"
 import HardshipButton from "@/components/dashboard/HardshipButton"
 import TenantAIChat from "@/components/dashboard/TenantAIChat"
 import GenerateCFKLetter from "@/components/dashboard/GenerateCFKLetter"
+import EscalationTimeline from "@/components/dashboard/EscalationTimeline"
+import LeaseRenewalButton from "@/components/dashboard/LeaseRenewalButton"
+import PaymentPlanTracker from "@/components/dashboard/PaymentPlanTracker"
+import CfkFollowUpBanner from "@/components/dashboard/CfkFollowUpBanner"
 
 const TIER_CONFIG: Record<string, { label: string; dot: string; textColor: string; bg: string }> = {
   legal:        { label: "Eviction Recommended",     dot: "bg-red-500",     textColor: "text-red-400",     bg: "bg-red-500/10 border-red-500/20" },
@@ -35,6 +40,9 @@ const INTERVENTION_LABELS: Record<string, string> = {
   card_expiry_30:       "Payment reminder sent",
   card_expiry_7:        "Payment reminder sent",
   no_payment_method:    "Payment method alert sent",
+  pre_due_urgent:       "Urgent pre-due reminder sent",
+  pre_due_delinquent_warning: "Pre-due balance warning sent",
+  hardship_checkin:     "Hardship check-in logged",
 }
 
 const AVATAR_COLORS = [
@@ -84,6 +92,30 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
     .eq("tenant_id", t.id)
     .order("sent_at", { ascending: false })
 
+  // Payment plan tracker data
+  const activePlan = interventions?.find(i => i.type === "payment_plan_agreed")
+  let planInstallments: { amount: number; due_date: string }[] = []
+  let planPaidIndices: number[] = []
+  let planTotalAmount = 0
+  let planFrequency = "monthly"
+
+  if (activePlan?.snapshot && (activePlan.snapshot as { installments?: unknown }).installments) {
+    const snap = activePlan.snapshot as { installments: { amount: number; due_date: string }[]; total_plan_amount?: number; frequency?: string }
+    planInstallments = snap.installments
+    planTotalAmount = snap.total_plan_amount ?? 0
+    planFrequency = snap.frequency ?? "monthly"
+
+    const { data: installmentPayments } = await supabase
+      .from("payments")
+      .select("note")
+      .eq("tenant_id", t.id)
+      .like("note", "installment:%")
+
+    planPaidIndices = (installmentPayments ?? [])
+      .map(p => parseInt((p.note as string).split(":")[1]))
+      .filter(n => !isNaN(n))
+  }
+
   const risk = scoreTenant({
     days_late_avg: t.days_late_avg ?? 0,
     late_payment_count: t.late_payment_count ?? 0,
@@ -114,6 +146,23 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
   const showCostComparison = risk.days_past_due >= 10 && (t.balance_due ?? 0) > 0
 
   const showEscalationBanner = monthsOwed >= 1.5
+
+  // CFK follow-up: offer sent 5+ days ago, balance still outstanding, no accepted/resolved status after
+  const lastCfk = interventions?.find(i => i.type === "cash_for_keys")
+  const daysSinceCfk = lastCfk
+    ? Math.floor((Date.now() - new Date(lastCfk.sent_at).getTime()) / (1000 * 60 * 60 * 24))
+    : 0
+  const showCfkFollowUp = !!lastCfk && daysSinceCfk >= 5 && (t.balance_due ?? 0) > 0
+
+  // Days until next rent due date (for timeline + risk context)
+  const daysUntilNextDue = (() => {
+    const now = new Date()
+    const dueDay = Math.min(Math.max(t.rent_due_day ?? 1, 1), 28)
+    const thisMonth = new Date(now.getFullYear(), now.getMonth(), dueDay)
+    const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, dueDay)
+    const target = thisMonth > now ? thisMonth : nextMonth
+    return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+  })()
 
   const tenantForActions = {
     id: t.id,
@@ -208,12 +257,43 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
         )}
       </div>
 
-      {/* Escalation banner — 2+ months owed */}
+      {/* Quick actions panel */}
+      <TenantActionsPanel tenant={tenantForActions} />
+
+      {/* Payment plan tracker */}
+      {planInstallments.length > 0 && (
+        <PaymentPlanTracker
+          tenantId={t.id}
+          installments={planInstallments}
+          paidIndices={planPaidIndices}
+          totalPlanAmount={planTotalAmount}
+          frequency={planFrequency}
+        />
+      )}
+
+      {/* Escalation path timeline */}
+      <EscalationTimeline
+        currentTier={risk.tier}
+        daysPastDue={risk.days_past_due}
+        daysUntilDue={(t.balance_due ?? 0) === 0 ? daysUntilNextDue : undefined}
+        tenantPattern={risk.tenant_pattern}
+      />
+
+      {/* Escalation banner — 1.5+ months owed */}
       {showEscalationBanner && (
         <EscalationDecisionBanner
           tenant={tenantForActions}
           econ={econ}
           propertyState={pmState}
+        />
+      )}
+
+      {/* CFK ignored follow-up */}
+      {showCfkFollowUp && (
+        <CfkFollowUpBanner
+          daysSinceCfk={daysSinceCfk}
+          tenantName={t.name}
+          state={pmState}
         />
       )}
 
@@ -234,7 +314,17 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
 
       {/* Lease + payment info */}
       <div className="bg-[#111827] border border-white/10 rounded-2xl p-5 mb-5">
-        <h2 className="text-white font-semibold text-sm mb-4">Lease & Payment Info</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-white font-semibold text-sm">Lease & Payment Info</h2>
+          {t.lease_end && (leaseExpiresDays === null || leaseExpiresDays <= 60) && (
+            <LeaseRenewalButton
+              tenantId={t.id}
+              tenantName={t.name}
+              currentLeaseEnd={t.lease_end}
+              currentRent={t.rent_amount}
+            />
+          )}
+        </div>
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-y-4 gap-x-6">
           {[
             { label: "Lease Start",    value: formatDate(t.lease_start) },
@@ -397,9 +487,21 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
       <div className="bg-[#111827] border border-white/10 rounded-2xl p-5">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-white font-semibold text-sm">Activity Log</h2>
-          {interventions && interventions.some((a: { snapshot?: unknown }) => a.snapshot) && (
-            <span className="text-[#2e3a50] text-xs">Click &ldquo;Why&rdquo; on any entry to see the risk snapshot</span>
-          )}
+          <div className="flex items-center gap-3">
+            {interventions && interventions.some((a: { snapshot?: unknown }) => a.snapshot) && (
+              <span className="text-[#2e3a50] text-xs hidden sm:block">Click &ldquo;Why&rdquo; on any entry to see the risk snapshot</span>
+            )}
+            {interventions && interventions.length > 0 && (
+              <a
+                href={`/api/tenants/${t.id}/audit-export`}
+                download
+                className="flex items-center gap-1.5 text-xs text-[#4b5563] hover:text-white transition-colors"
+              >
+                <FileText size={12} />
+                Export CSV
+              </a>
+            )}
+          </div>
         </div>
         <TenantActivityLog interventions={interventions || []} />
       </div>

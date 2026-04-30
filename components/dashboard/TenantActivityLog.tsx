@@ -1,6 +1,6 @@
 "use client"
 import { useState } from "react"
-import { Clock, ChevronDown, ChevronRight, Scale, Zap, Heart } from "lucide-react"
+import { Clock, ChevronDown, ChevronRight, Scale, Zap, Heart, Phone, FileText, MessageSquare } from "lucide-react"
 
 interface InterventionSnapshot {
   tier: string
@@ -40,19 +40,24 @@ const HARDSHIP_TYPE_LABELS: Record<string, string> = {
 }
 
 const INTERVENTION_LABELS: Record<string, string> = {
-  hardship_checkin: "Hardship check-in logged",
-  payment_reminder:     "Payment reminder sent",
-  proactive_reminder:   "Proactive reminder sent",
+  hardship_checkin:            "Hardship check-in logged",
+  payment_reminder:            "Payment reminder sent",
+  proactive_reminder:          "Proactive reminder sent",
   payment_method_alert:        "Payment method alert sent",
   pre_due_delinquent_warning:  "Pre-due balance warning sent",
+  pre_due_urgent:              "Urgent pre-due reminder sent",
   split_pay_offer:             "Payment plan offered",
-  cash_for_keys:        "Cash for Keys offered",
-  legal_packet:         "Legal notice sent",
-  // legacy types from earlier versions
-  card_expiry_alert:    "Payment reminder sent",
-  card_expiry_30:       "Payment reminder sent",
-  card_expiry_7:        "Payment reminder sent",
-  no_payment_method:    "Payment method alert sent",
+  cash_for_keys:               "Cash for Keys offered",
+  legal_packet:                "Legal notice sent",
+  call_logged:                 "Call logged",
+  payment_plan_agreed:         "Payment plan agreed",
+  custom_sms:                  "Custom SMS sent",
+  manual_note:                 "Note added",
+  // legacy
+  card_expiry_alert:           "Card expiry reminder sent",
+  card_expiry_30:              "Card expiry reminder sent",
+  card_expiry_7:               "Card expiry reminder sent",
+  no_payment_method:           "Payment method alert sent",
 }
 
 const TIER_STYLE: Record<string, { label: string; color: string; dot: string }> = {
@@ -195,40 +200,41 @@ function HardshipEntry({ entry, isLast }: { entry: Intervention; isLast: boolean
   )
 }
 
+const USER_ACTION_ICONS: Record<string, { icon: typeof Phone; color: string; bg: string }> = {
+  call_logged:          { icon: Phone,         color: "text-blue-400",    bg: "bg-blue-500/10 border-blue-500/20" },
+  payment_plan_agreed:  { icon: FileText,      color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
+  custom_sms:           { icon: MessageSquare, color: "text-violet-400",  bg: "bg-violet-500/10 border-violet-500/20" },
+}
+
 function ActivityEntry({ entry, isLast }: { entry: Intervention; isLast: boolean }) {
   const [expanded, setExpanded] = useState(false)
   const hasSnapshot = !!entry.snapshot
 
   const isSystemAction = entry.snapshot?.triggered_by === "system"
   const isDryRun = entry.status === "dry_run"
+  const userActionStyle = USER_ACTION_ICONS[entry.type]
 
   const baseLabel = entry.type.startsWith("pm_alert_day")
     ? `PM alerted (Day ${entry.type.replace("pm_alert_day", "")} tier)`
     : (INTERVENTION_LABELS[entry.type] ?? entry.type)
 
-  // Reframe label based on who/what triggered it
   const label = isDryRun
     ? `System evaluated — would have sent: ${baseLabel.toLowerCase()}`
     : isSystemAction
       ? `System sent: ${baseLabel.toLowerCase()}`
       : baseLabel
 
+  const IconEl = userActionStyle?.icon ?? (isSystemAction || isDryRun ? Zap : Clock)
+  const iconColor = userActionStyle?.color ?? (isDryRun ? "text-[#374151]" : isSystemAction ? "text-emerald-500" : "text-[#4b5563]")
+  const iconBg = userActionStyle?.bg ?? (isDryRun ? "bg-[#111827] border-white/5" : isSystemAction ? "bg-emerald-500/10 border-emerald-500/20" : "bg-white/5 border-white/10")
+
   return (
     <div className="flex gap-3 relative">
       {!isLast && (
         <div className="absolute left-3.5 top-7 bottom-0 w-px bg-white/5" />
       )}
-      <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 z-10 mt-0.5 ${
-        isDryRun
-          ? "bg-[#111827] border border-white/5"
-          : isSystemAction
-            ? "bg-emerald-500/10 border border-emerald-500/20"
-            : "bg-white/5 border border-white/10"
-      }`}>
-        {isSystemAction || isDryRun
-          ? <Zap size={11} className={isDryRun ? "text-[#374151]" : "text-emerald-500"} />
-          : <Clock size={11} className="text-[#4b5563]" />
-        }
+      <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 z-10 mt-0.5 border ${iconBg}`}>
+        <IconEl size={11} className={iconColor} />
       </div>
       <div className="pb-4 min-w-0 flex-1">
         <div className="flex items-start justify-between gap-2">

@@ -1,18 +1,23 @@
 "use client"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { LayoutDashboard, Building2, Users, Zap, CreditCard, LogOut, Settings, TrendingUp, CalendarDays } from "lucide-react"
+import { LayoutDashboard, Building2, Users, CreditCard, LogOut, Settings, TrendingUp, CalendarDays, BarChart2, Upload, Bell, ShieldCheck } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
+import { useEffect, useState } from "react"
 import { cn } from "@/lib/utils"
+
+const ADMIN_ID = "b9988721-6b42-4387-a3be-a62920a3b46f"
 
 const links = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
+  { href: "/dashboard/notifications", label: "Notifications", icon: Bell },
   { href: "/dashboard/tenants", label: "Tenants", icon: Users },
+  { href: "/dashboard/import", label: "Import Tenants", icon: Upload },
   { href: "/dashboard/properties", label: "Properties", icon: Building2 },
   { href: "/dashboard/rent-roll", label: "Rent Roll", icon: TrendingUp },
   { href: "/dashboard/leases", label: "Leases", icon: CalendarDays },
-  { href: "/dashboard/utility", label: "Utility Audit", icon: Zap },
+  { href: "/dashboard/impact", label: "Revenue Impact", icon: BarChart2 },
   { href: "/dashboard/billing", label: "Billing", icon: CreditCard },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ]
@@ -20,6 +25,17 @@ const links = [
 export default function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
+  const [isAdmin, setIsAdmin] = useState(false)
+
+  useEffect(() => {
+    links.forEach(({ href }) => router.prefetch(href))
+  }, [router])
+
+  useEffect(() => {
+    createClient().auth.getUser().then(({ data }) => {
+      if (data.user?.id === ADMIN_ID) setIsAdmin(true)
+    })
+  }, [])
 
   async function handleSignOut() {
     const supabase = createClient()
@@ -39,6 +55,7 @@ export default function Sidebar() {
           <Link
             key={href}
             href={href}
+            prefetch={true}
             className={cn(
               "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
               (href === "/dashboard" ? pathname === href : pathname.startsWith(href))
@@ -53,6 +70,21 @@ export default function Sidebar() {
       </nav>
 
       <div className="px-3 py-4 border-t border-[#1e2d45]">
+        {isAdmin && (
+          <Link
+            href="/admin"
+            prefetch={false}
+            className={cn(
+              "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors mb-1",
+              pathname === "/admin"
+                ? "bg-[#1a2744] text-[#60a5fa]"
+                : "text-[#4b5563] hover:bg-[#131929] hover:text-white"
+            )}
+          >
+            <ShieldCheck size={16} />
+            Admin
+          </Link>
+        )}
         <button
           onClick={handleSignOut}
           className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-[#9ca3af] hover:bg-[#131929] hover:text-white transition-colors w-full"

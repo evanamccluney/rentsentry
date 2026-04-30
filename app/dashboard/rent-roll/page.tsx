@@ -220,8 +220,8 @@ export default async function RentRollPage() {
                         </td>
                         <td className="px-5 py-3.5 text-[#6b7280]">
                           {t.unit}
-                          {(t.properties as { name?: string } | null)?.name && (
-                            <span className="text-[#374151]"> · {(t.properties as { name: string }).name}</span>
+                          {(t.properties as unknown as { name?: string } | null)?.name && (
+                            <span className="text-[#374151]"> · {(t.properties as unknown as { name: string }).name}</span>
                           )}
                         </td>
                         <td className="px-5 py-3.5 text-white tabular-nums">${rent.toLocaleString()}</td>

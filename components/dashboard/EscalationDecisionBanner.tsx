@@ -39,10 +39,11 @@ interface Props {
 export default function EscalationDecisionBanner({ tenant, econ, propertyState }: Props) {
   const [pendingAction, setPendingAction] = useState<"cash_for_keys" | "legal_packet" | null>(null)
   const [loading, setLoading] = useState(false)
+  const [showWhy, setShowWhy] = useState(false)
 
   const monthsOwed = tenant.rent_amount > 0 ? tenant.balance_due / tenant.rent_amount : 0
   const recAction: "cash_for_keys" | "legal_packet" = econ.recommendation === "cfk" ? "cash_for_keys" : "legal_packet"
-  const recHeadline = econ.recommendation === "cfk" ? "Offer Cash for Keys" : "File for Eviction (UD)"
+  const recHeadline = econ.recommendation === "cfk" ? "Offer Cash for Keys" : "File for Eviction"
 
   function buildSnapshot(actionType: string) {
     return {
@@ -185,35 +186,44 @@ export default function EscalationDecisionBanner({ tenant, econ, propertyState }
           </div>
         </div>
 
-        {/* Recommendation */}
-        <div className={`border rounded-xl px-4 py-3 mb-4 ${
-          econ.recommendation === "cfk"
-            ? "bg-emerald-500/5 border-emerald-500/20"
-            : "bg-red-500/5 border-red-500/20"
-        }`}>
-          <div className="flex items-center gap-2 mb-2">
-            <TrendingDown size={13} className={econ.recommendation === "cfk" ? "text-emerald-400 shrink-0" : "text-red-400 shrink-0"} />
-            <div className="text-[#4b5563] text-xs uppercase tracking-wide">RentSentry recommends</div>
-            <span className={`text-[10px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded ${
-              econ.recommendationStrength === "strong" ? "bg-white/10 text-white" :
-              econ.recommendationStrength === "moderate" ? "bg-yellow-500/15 text-yellow-400" :
-              "bg-white/5 text-[#6b7280]"
-            }`}>
-              {econ.recommendationStrength === "strong" ? "Strong" : econ.recommendationStrength === "moderate" ? "Moderate" : "Close call"}
-            </span>
+        {/* Recommendation — single line + collapsible Why */}
+        <div className="mb-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <TrendingDown size={13} className={econ.recommendation === "cfk" ? "text-emerald-400 shrink-0" : "text-red-400 shrink-0"} />
+              <span className="text-white font-semibold text-sm">{recHeadline}</span>
+              {econ.cfkSavings > 0 && (
+                <span className="text-[#6b7280] text-xs">— saves ~${econ.cfkSavings.toLocaleString()} vs eviction</span>
+              )}
+              <span className={`text-[10px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded ${
+                econ.recommendationStrength === "strong" ? "bg-white/10 text-white" :
+                econ.recommendationStrength === "moderate" ? "bg-yellow-500/15 text-yellow-400" :
+                "bg-white/5 text-[#6b7280]"
+              }`}>
+                {econ.recommendationStrength === "strong" ? "Strong" : econ.recommendationStrength === "moderate" ? "Moderate" : "Close call"}
+              </span>
+            </div>
+            <button
+              onClick={() => setShowWhy(v => !v)}
+              className="text-[#4b5563] text-xs hover:text-white transition-colors shrink-0"
+            >
+              {showWhy ? "Hide ↑" : "Why? ↓"}
+            </button>
           </div>
-          <p className="text-white text-sm font-semibold mb-2">{recHeadline}</p>
-          <ul className="space-y-1">
-            {econ.reasoning.map((r, i) => (
-              <li key={i} className="text-[#9ca3af] text-xs flex items-start gap-1.5">
-                <span className="w-1 h-1 rounded-full bg-[#374151] shrink-0 mt-1.5" />
-                {r}
-              </li>
-            ))}
-          </ul>
-          {econ.recommendation === "cfk" && (
-            <div className="mt-2 text-[#4b5563] text-[11px]">
-              {propertyState ?? "National avg"} · max viable CFK offer: <span className="text-white font-medium">${econ.breakEvenOffer.toLocaleString()}</span>
+
+          {showWhy && (
+            <div className="mt-3 pl-5 space-y-1.5">
+              {econ.reasoning.map((r, i) => (
+                <div key={i} className="text-[#9ca3af] text-xs flex items-start gap-1.5">
+                  <span className="w-1 h-1 rounded-full bg-[#374151] shrink-0 mt-1.5" />
+                  {r}
+                </div>
+              ))}
+              {econ.recommendation === "cfk" && (
+                <div className="text-[#4b5563] text-[11px] mt-1">
+                  {propertyState ?? "National avg"} · max viable offer: <span className="text-white font-medium">${econ.breakEvenOffer.toLocaleString()}</span>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -243,7 +253,7 @@ export default function EscalationDecisionBanner({ tenant, econ, propertyState }
             }`}
           >
             <Scale size={15} />
-            Prepare UD Filing
+            Start Eviction
             {recAction === "legal_packet" && (
               <span className="text-[10px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded-full ml-1">Recommended</span>
             )}

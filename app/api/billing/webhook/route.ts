@@ -30,7 +30,6 @@ export async function POST(req: NextRequest) {
         stripe_customer_id: session.customer as string,
         stripe_subscription_id: session.subscription as string,
         status: "active",
-        unit_count: parseInt(session.metadata?.unit_count || "0"),
         updated_at: new Date().toISOString(),
       })
     }

@@ -3,6 +3,7 @@ import { useState, useCallback, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { parseCSV, detectColumns, detectHistoryColumns, isHistoricalCSV, aggregateHistoricalRows, mapRow, type MappedTenant } from "@/lib/csv-parser"
 import { scoreTenant } from "@/lib/risk-engine"
+import { normalizePhone } from "@/lib/phone"
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -253,7 +254,7 @@ export default function UploadPage() {
         unit: t.unit || `Unit ${i + idx + 1}`,
         name: t.name || "Unknown",
         email: t.email || null,
-        phone: t.phone || null,
+        phone: normalizePhone(t.phone) ?? t.phone ?? null,
         rent_amount: t.rent_amount,
         lease_start: t.lease_start || null,
         lease_end: t.lease_end || null,

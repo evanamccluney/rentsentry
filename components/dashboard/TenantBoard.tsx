@@ -1139,7 +1139,7 @@ function PayOrQuitModal({
   const [downloading, setDownloading] = useState(false)
   const [sendingSms, setSendingSms] = useState(false)
   const [cfkMode, setCfkMode] = useState(false)
-  const [activeTab, setActiveTab] = useState<"plan" | "poq" | "cfk">("plan")
+  const [activeTab, setActiveTab] = useState<"plan" | "poq" | "cfk">("poq")
 
   const monthsOwed = tenant.rent_amount > 0 ? tenant.balance_due / tenant.rent_amount : 0
   const showCfkTab = monthsOwed >= 2
@@ -1236,11 +1236,12 @@ function PayOrQuitModal({
               </button>
               <button
                 onClick={() => setActiveTab("poq")}
-                className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 ${
                   activeTab === "poq" ? "bg-red-500/20 text-red-300 border border-red-500/30" : "text-[#6b7280] hover:text-white"
                 }`}
               >
                 Pay or Quit
+                <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-red-500/20 text-red-400 leading-none">Recommended</span>
               </button>
               <button
                 onClick={() => setActiveTab("cfk")}
@@ -1786,6 +1787,11 @@ function TenantCard({
           {t.tier === "cash_for_keys" && (
             <span className="text-xs px-2 py-0.5 rounded-full border font-medium bg-orange-500/10 text-orange-400 border-orange-500/20">
               Cash for Keys
+            </span>
+          )}
+          {!t.phone && (
+            <span className="text-xs px-2 py-0.5 rounded-full border font-medium bg-white/[0.03] text-[#4b5563] border-white/[0.06]" title="No phone number — SMS cannot be sent">
+              No phone
             </span>
           )}
         </div>

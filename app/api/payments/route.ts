@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { revalidateTag } from "next/cache"
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
@@ -40,6 +41,8 @@ export async function POST(req: NextRequest) {
     })
     .eq("id", tenantId)
     .eq("user_id", user.id)
+
+  revalidateTag(`tenant-data-${user.id}`, 'max')
 
   return NextResponse.json({
     ok: true,

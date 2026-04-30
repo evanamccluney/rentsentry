@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import twilio from "twilio"
+import { normalizePhone } from "@/lib/phone"
 
 const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
 const FROM_NUMBER = process.env.TWILIO_PHONE_NUMBER!
@@ -30,11 +31,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, skipped: "alerts disabled or no phone" })
   }
 
+  const pmPhone = normalizePhone(profile.pm_phone)
+  if (!pmPhone) {
+    return NextResponse.json({ ok: true, skipped: "invalid PM phone number" })
+  }
+
   if (!delinquent || delinquent.length === 0) {
     return NextResponse.json({ ok: true, skipped: "no delinquent tenants" })
   }
-
-  const pmPhone = profile.pm_phone
   const totalOwed = delinquent.reduce((sum, t) => sum + (t.balance_due ?? 0), 0)
 
   // Split into buckets

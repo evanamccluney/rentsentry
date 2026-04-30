@@ -243,6 +243,67 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ── Stale data nudge — email PM if no CSV uploaded in 7+ days ────────────────
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+  const userIds = [...new Set(tenants.map(t => t.user_id))]
+
+  for (const userId of userIds) {
+    try {
+      // Find the most recently created tenant for this user
+      const { data: latestTenant } = await supabase
+        .from("tenants")
+        .select("created_at")
+        .eq("user_id", userId)
+        .eq("status", "active")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .single()
+
+      if (!latestTenant) continue
+      if (latestTenant.created_at > sevenDaysAgo) continue  // fresh data, skip
+
+      // Check we haven't already sent a stale nudge in the last 7 days
+      const { data: recentNudge } = await supabase
+        .from("interventions")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("type", "stale_data_nudge")
+        .gte("sent_at", sevenDaysAgo)
+        .limit(1)
+
+      if (recentNudge && recentNudge.length > 0) continue
+
+      const { data: userData } = await supabase.auth.admin.getUserById(userId)
+      const pmEmail = userData?.user?.email
+      if (!pmEmail) continue
+
+      const daysSince = Math.floor((Date.now() - new Date(latestTenant.created_at).getTime()) / (1000 * 60 * 60 * 24))
+
+      await resend.emails.send({
+        from: "RentSentry <onboarding@resend.dev>",
+        to: pmEmail,
+        subject: `Your RentSentry data is ${daysSince} days old`,
+        html: `
+          <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:36px 28px;background:#0a0e1a;color:#f0f1f3;border-radius:14px;">
+            <p style="font-size:13px;color:#4b5563;margin:0 0 20px;letter-spacing:0.05em;text-transform:uppercase;">RentSentry · Data Freshness</p>
+            <h2 style="margin:0 0 12px;font-size:20px;">Your rent roll is ${daysSince} days old</h2>
+            <p style="color:#9ca3af;line-height:1.6;margin:0 0 20px;">RentSentry may be sending SMS reminders to tenants who have already paid. Upload a new CSV from your property management software to keep outreach accurate.</p>
+            <a href="${process.env.NEXT_PUBLIC_APP_URL}/dashboard/upload" style="display:inline-block;background:#60a5fa;color:#000;font-weight:700;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;">Upload Now →</a>
+          </div>`,
+      })
+
+      // Log so we don't send again this week
+      await supabase.from("interventions").insert({
+        user_id: userId,
+        tenant_id: latestTenant ? null : null,
+        type: "stale_data_nudge",
+        status: "sent",
+        sent_at: new Date().toISOString(),
+        notes: `Data ${daysSince} days old — nudge sent to PM`,
+      })
+    } catch { /* don't fail the job */ }
+  }
+
   return NextResponse.json({
     ok: true,
     ran_at: new Date().toISOString(),

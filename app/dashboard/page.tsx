@@ -1,7 +1,8 @@
 import { createClient } from "@/lib/supabase/server"
+import { getCachedTenants } from "@/lib/cache"
 import { scoreTenant } from "@/lib/risk-engine"
 import Link from "next/link"
-import { ArrowRight, TrendingUp, DollarSign, Users, AlertTriangle, CheckCircle2, Clock } from "lucide-react"
+import { ArrowRight, TrendingUp, DollarSign, Users, AlertTriangle, CheckCircle2, Clock, RefreshCw } from "lucide-react"
 
 const TIER_COLORS: Record<string, string> = {
   legal: "bg-red-500",
@@ -53,23 +54,16 @@ export default async function DashboardPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  const { data: rawTenants } = await supabase
-    .from("tenants")
-    .select(`
-      id, name, unit, email, rent_amount, balance_due,
-      days_late_avg, late_payment_count, previous_delinquency,
-      card_expiry, payment_method, last_payment_date, lease_end, rent_due_day,
-      properties(name, id)
-    `)
-    .eq("user_id", user!.id)
-    .eq("status", "active")
-
-  const { data: recentActivity } = await supabase
-    .from("interventions")
-    .select("id, type, sent_at, tenant_id, tenants(name, unit)")
-    .eq("user_id", user!.id)
-    .order("sent_at", { ascending: false })
-    .limit(8)
+  const [rawTenants, recentActivity] = await Promise.all([
+    getCachedTenants(user!.id),
+    supabase
+      .from("interventions")
+      .select("id, type, sent_at, tenant_id, tenants(name, unit)")
+      .eq("user_id", user!.id)
+      .order("sent_at", { ascending: false })
+      .limit(8)
+      .then(r => r.data),
+  ])
 
   const tenants = (rawTenants || []).map(t => ({
     ...t,
@@ -85,6 +79,14 @@ export default async function DashboardPage() {
       rent_due_day: t.rent_due_day ?? 1,
     }),
   }))
+
+  const lastUploadAt = rawTenants && rawTenants.length > 0
+    ? new Date(Math.max(...rawTenants.map(t => new Date((t as any).created_at).getTime())))
+    : null
+  const daysSinceUpload = lastUploadAt
+    ? Math.floor((Date.now() - lastUploadAt.getTime()) / (1000 * 60 * 60 * 24))
+    : null
+  const dataIsStale = daysSinceUpload !== null && daysSinceUpload >= 7
 
   const total = tenants.length
   const monthlyRent = tenants.reduce((s, t) => s + (t.rent_amount || 0), 0)
@@ -155,6 +157,21 @@ export default async function DashboardPage() {
           }
         </p>
       </div>
+
+      {/* Stale data banner */}
+      {dataIsStale && (
+        <div className="flex items-center justify-between bg-amber-500/10 border border-amber-500/20 rounded-2xl px-5 py-3 mb-6">
+          <div className="flex items-center gap-3">
+            <RefreshCw size={14} className="text-amber-400 shrink-0" />
+            <span className="text-amber-400 text-sm">
+              Your rent roll data is <span className="font-semibold">{daysSinceUpload} days old</span> — SMS outreach may be targeting tenants who already paid.
+            </span>
+          </div>
+          <Link href="/dashboard/upload" className="shrink-0 ml-4 text-xs font-semibold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-lg hover:bg-amber-500/20 transition-colors">
+            Upload now
+          </Link>
+        </div>
+      )}
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">

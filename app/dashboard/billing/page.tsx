@@ -1,6 +1,12 @@
 import { createClient } from "@/lib/supabase/server"
 import BillingButtons from "@/components/dashboard/BillingButtons"
-import { CheckCircle2 } from "lucide-react"
+import { CheckCircle2, Clock, AlertTriangle } from "lucide-react"
+
+function trialStatus(createdAt: string) {
+  const trialEndsAt = new Date(new Date(createdAt).getTime() + 30 * 24 * 60 * 60 * 1000)
+  const daysLeft = Math.ceil((trialEndsAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+  return { daysLeft, trialEndsAt, active: daysLeft > 0 }
+}
 
 export default async function BillingPage({
   searchParams,
@@ -17,21 +23,17 @@ export default async function BillingPage({
     .eq("user_id", user!.id)
     .single()
 
-  const { count: unitCount } = await supabase
-    .from("tenants")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", user!.id)
-    .eq("status", "active")
-
-  const units = unitCount || 0
-  const monthlyTotal = units * 4
-  const currentStatus = subscription?.status || "inactive"
+  const hasActiveSub = subscription?.status === "active"
+  const trial = trialStatus(user!.created_at)
+  const currentStatus = subscription?.status || (trial.active ? "trial" : "expired")
 
   const statusConfig: Record<string, { label: string; color: string; bg: string }> = {
-    active:   { label: "Active",   color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
-    past_due: { label: "Past Due", color: "text-yellow-400",  bg: "bg-yellow-400/10 border-yellow-400/20" },
-    cancelled:{ label: "Cancelled",color: "text-red-400",     bg: "bg-red-500/10 border-red-500/20" },
-    inactive: { label: "Inactive", color: "text-[#6b7280]",   bg: "bg-white/5 border-white/10" },
+    active:   { label: "Active",        color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
+    trial:    { label: "Free Trial",    color: "text-blue-400",    bg: "bg-blue-500/10 border-blue-500/20" },
+    past_due: { label: "Past Due",      color: "text-yellow-400",  bg: "bg-yellow-400/10 border-yellow-400/20" },
+    cancelled:{ label: "Cancelled",     color: "text-red-400",     bg: "bg-red-500/10 border-red-500/20" },
+    expired:  { label: "Trial Expired", color: "text-red-400",     bg: "bg-red-500/10 border-red-500/20" },
+    inactive: { label: "Inactive",      color: "text-[#6b7280]",   bg: "bg-white/5 border-white/10" },
   }
   const status = statusConfig[currentStatus] ?? statusConfig.inactive
 
@@ -49,6 +51,14 @@ export default async function BillingPage({
         </div>
       )}
 
+      {/* Trial expired warning */}
+      {!hasActiveSub && !trial.active && (
+        <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-4 mb-6 flex items-center gap-3">
+          <AlertTriangle size={16} className="text-red-400 shrink-0" />
+          <span className="text-red-400 text-sm font-medium">Your 30-day trial has expired. Subscribe below to restore full access.</span>
+        </div>
+      )}
+
       {/* Stat cards */}
       <div className="grid grid-cols-3 gap-4 mb-6">
         <div className="bg-[#111827] border border-white/10 rounded-2xl p-4">
@@ -57,29 +67,63 @@ export default async function BillingPage({
             {status.label}
           </span>
         </div>
+
         <div className="bg-[#111827] border border-white/10 rounded-2xl p-4">
-          <div className="text-[#4b5563] text-xs uppercase tracking-wide mb-2">Active Units</div>
-          <div className="text-2xl font-bold text-white tabular-nums">{units}</div>
-          <div className="text-[#4b5563] text-xs mt-1">$4.00 per unit</div>
+          <div className="text-[#4b5563] text-xs uppercase tracking-wide mb-2">
+            {hasActiveSub ? "Plan" : "Trial"}
+          </div>
+          {hasActiveSub ? (
+            <>
+              <div className="text-white text-sm font-semibold">$49 / month</div>
+              <div className="text-[#4b5563] text-xs mt-1">Unlimited tenants</div>
+            </>
+          ) : trial.active ? (
+            <>
+              <div className="flex items-center gap-1.5">
+                <Clock size={13} className={trial.daysLeft <= 3 ? "text-red-400" : trial.daysLeft <= 7 ? "text-amber-400" : "text-blue-400"} />
+                <div className={`text-sm font-semibold ${trial.daysLeft <= 3 ? "text-red-400" : trial.daysLeft <= 7 ? "text-amber-400" : "text-white"}`}>
+                  {trial.daysLeft} day{trial.daysLeft !== 1 ? "s" : ""} left
+                </div>
+              </div>
+              <div className="text-[#4b5563] text-xs mt-1">
+                Expires {trial.trialEndsAt.toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="text-red-400 text-sm font-semibold">Expired</div>
+              <div className="text-[#4b5563] text-xs mt-1">Subscribe to restore</div>
+            </>
+          )}
         </div>
+
         <div className="bg-[#111827] border border-white/10 rounded-2xl p-4">
-          <div className="text-[#4b5563] text-xs uppercase tracking-wide mb-2">Monthly Total</div>
-          <div className="text-2xl font-bold text-white tabular-nums">${monthlyTotal.toLocaleString()}</div>
-          <div className="text-[#4b5563] text-xs mt-1">Billed monthly</div>
+          <div className="text-[#4b5563] text-xs uppercase tracking-wide mb-2">Price</div>
+          <div className="text-2xl font-bold text-white tabular-nums">$49</div>
+          <div className="text-[#4b5563] text-xs mt-1">per month · cancel anytime</div>
         </div>
       </div>
 
-      {/* Pricing */}
+      {/* Plan details */}
       <div className="bg-[#111827] border border-white/10 rounded-2xl p-6 mb-6">
-        <h2 className="text-white font-semibold text-sm mb-5">What&apos;s included</h2>
+        <div className="flex items-baseline justify-between mb-5">
+          <h2 className="text-white font-semibold text-sm">What&apos;s included</h2>
+          <div className="flex items-baseline gap-1">
+            <span className="text-3xl font-bold text-white">$49</span>
+            <span className="text-[#6b7280] text-sm">/ month</span>
+          </div>
+        </div>
+
         <div className="space-y-4">
           {[
-            { label: "Risk Scoring Engine",         desc: "Proactive 7-tier scoring before rent is due" },
-            { label: "Phase 1 — Predictive Alerts", desc: "Card expiry warnings, proactive reminders sent before the 1st" },
-            { label: "Phase 2 — PM Decision Support", desc: "Daily alerts with escalation context — you decide, we never auto-send legal" },
-            { label: "Eviction Cost Comparison",    desc: "State-based Eviction vs Cash for Keys estimates on Day 10+" },
-            { label: "Utility Leakage Detection",   desc: "Cross-reference rent roll to find silent utility costs" },
-            { label: "Daily Cron Automation",        desc: "Phase 1 + Phase 2 run automatically every morning" },
+            { label: "Risk Scoring Engine",           desc: "7-tier proactive scoring before rent is even due" },
+            { label: "Automated SMS Reminders",       desc: "Behavior-based rules fire reminders to tenants automatically" },
+            { label: "PM Morning Confirmations",      desc: "Texts you daily to confirm payments — stops false SMS to tenants who already paid" },
+            { label: "Predictive Alerts",             desc: "Card expiry warnings, no-payment-method alerts, proactive reminders before the 1st" },
+            { label: "Eviction vs Cash for Keys",     desc: "State-based cost breakdown — know exactly which option saves you more money" },
+            { label: "Payment Plan Tracker",          desc: "Log installment agreements, track payments, auto-remind on due dates" },
+            { label: "Escalation Decision Support",   desc: "Clear recommended next step at every stage — you approve, we never auto-send legal notices" },
+            { label: "Unlimited Tenants",             desc: "No per-unit pricing. Add as many properties as you manage." },
           ].map(f => (
             <div key={f.label} className="flex items-start gap-3">
               <div className="w-4 h-4 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center mt-0.5 shrink-0">
@@ -93,17 +137,9 @@ export default async function BillingPage({
           ))}
         </div>
 
-        <div className="mt-6 pt-5 border-t border-white/5">
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-4xl font-bold text-white">$4</span>
-            <span className="text-[#6b7280] text-sm">/ unit / month</span>
-          </div>
-          <p className="text-[#4b5563] text-sm mt-1">
-            {units > 0
-              ? `Your portfolio: ${units} units = $${monthlyTotal}/month`
-              : "Upload a rent roll to calculate your price."}
-          </p>
-        </div>
+        <p className="text-[#374151] text-xs mt-6 pt-4 border-t border-white/5">
+          Flat rate. No per-unit fees, no setup costs, no contracts. Cancel any time from this page.
+        </p>
       </div>
 
       <BillingButtons status={currentStatus} />

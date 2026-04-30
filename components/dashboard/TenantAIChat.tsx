@@ -85,13 +85,15 @@ export default function TenantAIChat({ tenantId, tenantName }: Props) {
 
   return (
     <>
-      <button
-        onClick={() => setOpen(true)}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-500/15 border border-violet-500/30 text-violet-300 text-sm font-medium hover:bg-violet-500/25 transition-colors"
-      >
-        <Sparkles size={13} />
-        Ask AI
-      </button>
+      {!open && (
+        <button
+          onClick={() => setOpen(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-500/15 border border-violet-500/30 text-violet-300 text-sm font-medium hover:bg-violet-500/25 transition-colors"
+        >
+          <Sparkles size={13} />
+          Ask AI
+        </button>
+      )}
 
       {/* Backdrop */}
       {open && (

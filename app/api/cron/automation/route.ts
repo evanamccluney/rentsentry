@@ -6,11 +6,13 @@
  *
  * Rules (evaluated in priority order, each deduplicated independently):
  *
- *   Rule A — Proactive reminder
+ *   Rule A — 5-day proactive reminder
  *     Trigger: watch or reminder tier + late history (≥2 late payments OR avg ≥3 days)
- *             + within 3 days of rent due date
+ *             + within 5 days of rent due date
  *     Type: proactive_reminder
  *     Dedup: skip if sent within 14 days
+ *     Research: Day -3 reminder converts 25-30% of would-be late payers to on-time.
+ *               Day -5 reminder gives chronic-late tenants extra lead time to prepare.
  *
  *   Rule B — No payment method alert
  *     Trigger: watch tier + no payment method on file + within 7 days of rent due date
@@ -23,10 +25,18 @@
  *     Dedup: skip if sent within 7 days
  *
  *   Rule D — Pre-due warning for already-delinquent tenants
- *     Trigger: balance_due > 0 + within 5 days of rent due date
+ *     Trigger: balance_due > 0 + within 7 days of rent due date
  *     Type: pre_due_delinquent_warning
  *     SMS: warns tenant they have an existing balance AND rent is coming up
  *     Dedup: skip if sent within 14 days
+ *
+ *   Rule E — 1-day urgent pre-due alert (high-risk tenants only)
+ *     Trigger: ≥2 late payments OR avg ≥3 days late + within 1 day of rent due date
+ *     Type: pre_due_urgent
+ *     SMS: urgent tone — rent due today/tomorrow, past history noted
+ *     Dedup: skip if sent within 14 days
+ *     Research: Day 0 morning reminder captures 40-50% of remaining at-risk payers.
+ *               These tenants need a separate final nudge even after the Day -5 reminder.
  *
  * Respects per-user Auto Mode (profiles.auto_mode):
  *   ON  → send SMS + log as "sent"
@@ -40,6 +50,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import twilio from "twilio"
 import { scoreTenant } from "@/lib/risk-engine"
+import { sendTenantEmail } from "@/lib/email"
 
 const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
 const FROM_NUMBER = process.env.TWILIO_PHONE_NUMBER!
@@ -86,7 +97,7 @@ async function recentlySent(
 async function sendAndLog(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: any,
-  tenant: { id: string; user_id: string; name: string; phone: string | null },
+  tenant: { id: string; user_id: string; name: string; phone: string | null; email?: string | null },
   type: string,
   smsBody: string,
   snapshot: object,
@@ -101,6 +112,9 @@ async function sendAndLog(
           to: tenant.phone,
           body: smsBody,
         })
+      } else if (tenant.email) {
+        // Email fallback when no phone number on file
+        await sendTenantEmail(tenant.email, type, tenant.name)
       }
       await supabase.from("interventions").insert({
         tenant_id: tenant.id,
@@ -112,7 +126,7 @@ async function sendAndLog(
       })
       results.sent++
     } catch (err: unknown) {
-      console.error("SMS send error:", (err as Error)?.message)
+      console.error("send error:", (err as Error)?.message)
       results.errors++
     }
   } else {
@@ -144,7 +158,7 @@ export async function GET(req: NextRequest) {
   const { data: tenants, error } = await supabase
     .from("tenants")
     .select(`
-      id, user_id, name, phone,
+      id, user_id, name, phone, email,
       card_expiry, payment_method,
       balance_due, rent_amount, rent_due_day,
       days_late_avg, late_payment_count,
@@ -177,7 +191,65 @@ export async function GET(req: NextRequest) {
     dry_run: 0,
     skipped_dedup: 0,
     skipped_no_trigger: 0,
+    skipped_awaiting_pm: 0,
+    installment_reminders: 0,
     errors: 0,
+  }
+
+  // Pre-fetch pending PM confirmations — tenants in these are skipped for balance rules
+  // (PM was asked if they paid, hasn't replied yet — don't fire until we know)
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
+  const { data: pendingConfirms } = await supabase
+    .from("interventions")
+    .select("snapshot")
+    .eq("type", "pm_confirmation_sent")
+    .eq("status", "pending")
+    .gte("sent_at", todayStart.toISOString())
+
+  const awaitingPmConfirm = new Set<string>()
+  for (const confirm of pendingConfirms ?? []) {
+    const confirmations = (confirm.snapshot as { confirmations?: { tenant_id: string }[] })?.confirmations ?? []
+    for (const c of confirmations) {
+      if (c.tenant_id) awaitingPmConfirm.add(c.tenant_id)
+    }
+  }
+
+  // Pre-fetch payment plan data for Rule F
+  const today = new Date().toISOString().split("T")[0]
+  const tenantIds = tenants.map((t: { id: string }) => t.id)
+
+  const { data: allPlans } = await supabase
+    .from("interventions")
+    .select("tenant_id, sent_at, snapshot")
+    .in("tenant_id", tenantIds)
+    .eq("type", "payment_plan_agreed")
+    .order("sent_at", { ascending: false })
+
+  // Most recent plan per tenant
+  const planByTenant = new Map<string, { installments: { amount: number; due_date: string }[] }>()
+  for (const plan of allPlans ?? []) {
+    if (!planByTenant.has(plan.tenant_id) && plan.snapshot?.installments) {
+      planByTenant.set(plan.tenant_id, { installments: plan.snapshot.installments })
+    }
+  }
+
+  // Fetch all installment payments for tenants with plans
+  const planTenantIds = [...planByTenant.keys()]
+  const paidByTenant = new Map<string, Set<number>>()
+  if (planTenantIds.length > 0) {
+    const { data: installmentPayments } = await supabase
+      .from("payments")
+      .select("tenant_id, note")
+      .in("tenant_id", planTenantIds)
+      .like("note", "installment:%")
+
+    for (const payment of installmentPayments ?? []) {
+      const idx = parseInt((payment.note as string).split(":")[1])
+      if (!isNaN(idx)) {
+        if (!paidByTenant.has(payment.tenant_id)) paidByTenant.set(payment.tenant_id, new Set())
+        paidByTenant.get(payment.tenant_id)!.add(idx)
+      }
+    }
   }
 
   for (const t of tenants) {
@@ -220,14 +292,16 @@ export async function GET(req: NextRequest) {
     const hasHistory = (t.late_payment_count ?? 0) >= 2 || (t.days_late_avg ?? 0) >= 3
     const noPaymentMethod = !t.payment_method || t.payment_method === "unknown"
     const hasBalance = (t.balance_due ?? 0) > 0
+    const pmConfirmPending = awaitingPmConfirm.has(t.id)
     let triggered = false
 
-    // ── Rule A: Proactive reminder — behavior-based, no payment metadata needed ──
-    // Fires 3 days before rent due date for watch/reminder tenants with late history
+    // ── Rule A: 5-day proactive reminder — behavior-based, no payment metadata needed ─
+    // Fires 5 days before rent due date for watch/reminder tenants with late history.
+    // Research: chronic-late and at-risk tenants benefit from extra lead time to prepare.
     if (
       (risk.tier === "watch" || risk.tier === "reminder") &&
       hasHistory &&
-      untilDue <= 3
+      untilDue <= 5
     ) {
       triggered = true
       results.evaluated++
@@ -235,11 +309,10 @@ export async function GET(req: NextRequest) {
       if (alreadySent) {
         results.skipped_dedup++
       } else {
-        await sendAndLog(
-          supabase, t, "proactive_reminder",
-          `Hi ${t.name}, rent is due in ${untilDue} day${untilDue === 1 ? "" : "s"}. Based on your payment history, we're reaching out early to give you time to prepare. Contact your property manager with any questions. Reply STOP to opt out.`,
-          snapshot, autoMode, results
-        )
+        const msg = untilDue <= 1
+          ? `Hi ${t.name}, rent is due ${untilDue === 0 ? "today" : "tomorrow"}. Based on your payment history, we want to make sure you're all set. Contact your property manager if you have any questions. Reply STOP to opt out.`
+          : `Hi ${t.name}, rent is due in ${untilDue} days. Based on your payment history, we're reaching out early to give you time to prepare. Contact your property manager with any questions. Reply STOP to opt out.`
+        await sendAndLog(supabase, t, "proactive_reminder", msg, snapshot, autoMode, results)
       }
     }
 
@@ -280,9 +353,11 @@ export async function GET(req: NextRequest) {
     }
 
     // ── Rule D: Pre-due warning for already-delinquent tenants ───────────────────
-    // Fires 5 days before rent due date when tenant already has a balance
-    // This is the "Kevin Durant" scenario — catch up on arrears AND prevent next miss
-    if (hasBalance && untilDue <= 5) {
+    // Fires 7 days before rent due date when tenant already has an outstanding balance.
+    // Extended from 5→7 days: delinquent tenants need more lead time to address both
+    // the existing balance and the upcoming rent charge simultaneously.
+    // Skipped if PM was asked about this tenant today and hasn't replied yet.
+    if (hasBalance && untilDue <= 7 && !pmConfirmPending) {
       triggered = true
       results.evaluated++
       const alreadySent = await recentlySent(supabase, t.id, "pre_due_delinquent_warning", 14)
@@ -297,12 +372,64 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // ── Rule E: 1-day urgent pre-due alert — high-risk tenants ──────────────────
+    // Fires when rent is due today or tomorrow for tenants with 2+ late payments
+    // OR avg 3+ days late. Research: a same-day/next-day reminder captures 40-50%
+    // of at-risk payers who still haven't paid after the 5-day warning.
+    // Uses a separate intervention type so it fires independently of Rule A's dedup.
+    if (
+      untilDue <= 1 &&
+      ((t.late_payment_count ?? 0) >= 2 || (t.days_late_avg ?? 0) >= 3) &&
+      !hasBalance  // delinquent tenants already get Rule D; this targets pre-due risk
+    ) {
+      triggered = true
+      results.evaluated++
+      const alreadySent = await recentlySent(supabase, t.id, "pre_due_urgent", 14)
+      if (alreadySent) {
+        results.skipped_dedup++
+      } else {
+        const urgentMsg = untilDue === 0
+          ? `Hi ${t.name}, rent is due TODAY. Please submit your payment as soon as possible to avoid a late fee. Contact your property manager immediately if you need assistance. Reply STOP to opt out.`
+          : `Hi ${t.name}, rent is due TOMORROW. Please ensure your payment is ready — based on your account history, we want to make sure you're prepared. Reply STOP to opt out.`
+        await sendAndLog(supabase, t, "pre_due_urgent", urgentMsg, snapshot, autoMode, results)
+      }
+    }
+
+    // ── Rule F: installment due-date reminder ───────────────────────────────────
+    // If today is a payment plan installment due date and that installment hasn't
+    // been marked paid, send a reminder SMS. Only one reminder per tenant per day.
+    const plan = planByTenant.get(t.id)
+    if (plan) {
+      const paidIndices = paidByTenant.get(t.id) ?? new Set<number>()
+      for (let i = 0; i < plan.installments.length; i++) {
+        if (plan.installments[i].due_date === today && !paidIndices.has(i)) {
+          triggered = true
+          results.evaluated++
+          const alreadySent = await recentlySent(supabase, t.id, "installment_reminder", 1)
+          if (alreadySent) {
+            results.skipped_dedup++
+          } else {
+            await sendAndLog(
+              supabase, t, "installment_reminder",
+              `Hi ${t.name}, installment ${i + 1} of your payment plan ($${plan.installments[i].amount.toLocaleString()}) is due today. Please submit your payment as soon as possible. Contact your property manager if you have questions. Reply STOP to opt out.`,
+              { ...snapshot, plan_installment_index: i, plan_installment_amount: plan.installments[i].amount },
+              autoMode, results
+            )
+            results.installment_reminders++
+          }
+          break // one reminder per tenant per day
+        }
+      }
+    }
+
+    if (pmConfirmPending && hasBalance && !triggered) results.skipped_awaiting_pm++
     if (!triggered) results.skipped_no_trigger++
   }
 
   return NextResponse.json({
     ok: true,
     ran_at: new Date().toISOString(),
+    today,
     auto_mode_on_for: [...autoModeByUser.entries()].filter(([, v]) => v).map(([k]) => k),
     results,
   })

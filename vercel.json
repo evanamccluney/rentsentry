@@ -7,6 +7,14 @@
     {
       "path": "/api/cron/phase2",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/pm-confirm",
+      "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/automation",
+      "schedule": "0 10 * * *"
     }
   ]
 }

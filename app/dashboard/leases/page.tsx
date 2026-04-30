@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server"
 import Link from "next/link"
 import { CalendarDays, AlertTriangle, Clock, CheckCircle2 } from "lucide-react"
+import LeaseRenewalButton from "@/components/dashboard/LeaseRenewalButton"
 
 function daysUntil(iso: string) {
   return Math.ceil((new Date(iso).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
@@ -32,18 +33,17 @@ function TenantRow({ t }: { t: Tenant }) {
             ? { label: `${t.days}d left`, cls: "bg-yellow-500/15 text-yellow-400" }
             : { label: `${t.days}d left`, cls: "bg-white/[0.05] text-[#6b7280]" }
 
+  const showRenew = t.days <= 60
+
   return (
-    <Link
-      href={`/dashboard/tenants/${t.id}`}
-      className="flex items-center justify-between px-5 py-3.5 hover:bg-white/[0.02] transition-colors border-b border-white/[0.04] last:border-0"
-    >
-      <div className="min-w-0">
+    <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.04] last:border-0 hover:bg-white/[0.02] transition-colors">
+      <Link href={`/dashboard/tenants/${t.id}`} className="min-w-0 flex-1">
         <div className="text-white text-sm font-medium">{t.name}</div>
         <div className="text-[#4b5563] text-xs mt-0.5">
           Unit {t.unit}{t.properties?.name ? ` · ${t.properties.name}` : ""}
         </div>
-      </div>
-      <div className="flex items-center gap-6 shrink-0 ml-4">
+      </Link>
+      <div className="flex items-center gap-4 shrink-0 ml-4">
         <div className="text-right hidden sm:block">
           <div className="text-[#6b7280] text-xs">{formatDate(t.lease_end!)}</div>
           {t.lease_start && (
@@ -56,8 +56,16 @@ function TenantRow({ t }: { t: Tenant }) {
         <span className={`text-[10px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${badge.cls}`}>
           {badge.label}
         </span>
+        {showRenew && (
+          <LeaseRenewalButton
+            tenantId={t.id}
+            tenantName={t.name}
+            currentLeaseEnd={t.lease_end}
+            currentRent={t.rent_amount}
+          />
+        )}
       </div>
-    </Link>
+    </div>
   )
 }
 
@@ -81,7 +89,7 @@ export default async function LeasesPage() {
 
   const tenants: Tenant[] = (rawTenants || []).map(t => ({
     ...t,
-    properties: (t.properties as { name: string } | null),
+    properties: (t.properties as unknown as { name: string } | null),
     days: daysUntil(t.lease_end!),
   }))
 

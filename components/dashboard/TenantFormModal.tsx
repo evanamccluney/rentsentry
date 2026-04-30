@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { X } from "lucide-react"
 import { toast } from "sonner"
+import { normalizePhone } from "@/lib/phone"
 
 interface Property { id: string; name: string }
 
@@ -65,7 +66,7 @@ export default function TenantFormModal({ mode, properties, initial, onClose }: 
     const payload = {
       name: form.name.trim(),
       email: form.email.trim() || null,
-      phone: form.phone.trim() || null,
+      phone: (normalizePhone(form.phone) ?? form.phone.trim()) || null,
       unit: form.unit.trim(),
       property_id: form.property_id,
       rent_amount: parseFloat(form.rent_amount) || 0,

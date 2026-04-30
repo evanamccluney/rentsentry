@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { revalidateTag } from "next/cache"
 import twilio from "twilio"
+import { normalizePhone } from "@/lib/phone"
+import { sendTenantEmail } from "@/lib/email"
 
 const twilioClient = twilio(
   process.env.TWILIO_ACCOUNT_SID,
@@ -58,22 +61,34 @@ export async function POST(req: NextRequest) {
     snapshot: snapshot ?? null,
   })
 
-  // Send SMS — use custom message body if provided, otherwise look up template
-  if (phone) {
+  // Send SMS if phone available, otherwise fall back to email
+  const normalizedPhone = normalizePhone(phone)
+  if (normalizedPhone) {
     const body = message?.trim() || (SMS_MESSAGES[type] ? SMS_MESSAGES[type](name || "Resident") : null)
     if (body) {
       try {
         await twilioClient.messages.create({
           from: FROM_NUMBER,
-          to: phone,
+          to: normalizedPhone,
           body,
         })
       } catch (err: any) {
-        // Log but don't fail the whole request — intervention is already recorded
         console.error("Twilio send error:", err?.message)
       }
     }
+  } else {
+    // No phone — try email fallback
+    const { data: tenantRecord } = await supabase
+      .from("tenants")
+      .select("email")
+      .eq("id", tenantId)
+      .single()
+    if (tenantRecord?.email) {
+      await sendTenantEmail(tenantRecord.email, type, name || "Resident")
+    }
   }
+
+  revalidateTag(`tenant-data-${user.id}`, 'max')
 
   return NextResponse.json({ ok: true, message: ACTION_LABELS[type] || "Action logged." })
 }

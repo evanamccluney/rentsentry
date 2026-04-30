@@ -9,15 +9,6 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
 
-  // Count active units for this user
-  const { count } = await supabase
-    .from("tenants")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", user.id)
-    .eq("status", "active")
-
-  const unitCount = count || 0
-
   const session = await stripe.checkout.sessions.create({
     mode: "subscription",
     payment_method_types: ["card"],
@@ -28,18 +19,15 @@ export async function POST(req: NextRequest) {
           currency: "usd",
           product_data: {
             name: "RentSentry — Revenue Protection",
-            description: `${unitCount} active units × $4.00/unit/month`,
+            description: "Unlimited tenants · Automated reminders · Risk scoring · Escalation support",
           },
-          unit_amount: 400, // $4.00 in cents
+          unit_amount: 4900, // $49.00/month
           recurring: { interval: "month" },
         },
-        quantity: Math.max(unitCount, 1),
+        quantity: 1,
       },
     ],
-    metadata: {
-      user_id: user.id,
-      unit_count: String(unitCount),
-    },
+    metadata: { user_id: user.id },
     success_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/billing?success=true`,
     cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard/billing`,
   })

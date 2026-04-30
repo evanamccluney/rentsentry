@@ -96,13 +96,14 @@ export default function AIChat() {
 
   const pathname = usePathname()
   const onTenantsPage = pathname.startsWith("/dashboard/tenants")
+  const onTenantDetailPage = /\/dashboard\/tenants\/[^/]+/.test(pathname)
   const hasIssues = !!status && status.needs_action > 0
   const urgentCount = status ? (status.breakdown.legal + status.breakdown.pay_or_quit) : 0
 
   return (
     <>
-      {/* Floating trigger */}
-      {!open && (
+      {/* Floating trigger — hidden on tenant detail pages (they have TenantAIChat) */}
+      {!open && !onTenantDetailPage && (
         <button
           onClick={() => setOpen(true)}
           className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 bg-[#60a5fa] hover:bg-[#3b82f6] text-black font-semibold px-4 py-3 rounded-2xl shadow-lg shadow-blue-500/25 transition-all duration-200 hover:scale-105"
