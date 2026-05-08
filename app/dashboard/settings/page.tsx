@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
 import { Bell, CalendarClock, DollarSign, FileText, Phone, Scale, User, Zap } from "lucide-react"
 import PlaidConnect from "@/components/dashboard/PlaidConnect"
+import StripeConnect from "@/components/dashboard/StripeConnect"
 import {
   escalationRulesToProfileUpdate,
   normalizeEscalationRules,
@@ -16,6 +17,7 @@ const PROFILE_SELECT = `
   auto_mode, pm_phone, pm_alerts_enabled, late_fee_percent, pm_display_name,
   attorney_name, attorney_email, attorney_phone,
   plaid_item_id, plaid_connected_at,
+  stripe_account_id, stripe_connect_at,
   escalation_preset, reminder_day, payment_plan_day, pay_or_quit_day,
   cfk_review_day, attorney_review_day, repeat_offender_accelerator_days,
   pre_due_risk_outreach_enabled, pre_due_risk_review_days_before_due,
@@ -100,6 +102,8 @@ export default function SettingsPage() {
   const [attorneyPhone, setAttorneyPhone] = useState("")
   const [plaidConnected, setPlaidConnected] = useState(false)
   const [plaidConnectedAt, setPlaidConnectedAt] = useState<string | null>(null)
+  const [stripeConnected, setStripeConnected] = useState(false)
+  const [stripeConnectAt, setStripeConnectAt] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [loaded, setLoaded] = useState(false)
 
@@ -125,6 +129,8 @@ export default function SettingsPage() {
         setAttorneyPhone(data.attorney_phone ?? "")
         setPlaidConnected(!!data.plaid_item_id)
         setPlaidConnectedAt(data.plaid_connected_at ?? null)
+        setStripeConnected(!!data.stripe_account_id)
+        setStripeConnectAt(data.stripe_connect_at ?? null)
         setRules(toRules(data))
       }
       setLoaded(true)
@@ -451,6 +457,17 @@ export default function SettingsPage() {
             setPlaidConnectedAt(new Date().toISOString())
           }}
         />
+      </div>
+
+      <div className="bg-[#111827] border border-white/10 rounded-2xl p-6 mb-5">
+        <div className="flex items-center gap-2 mb-1">
+          <DollarSign size={15} className="text-blue-400" />
+          <h2 className="text-white font-semibold text-sm">Payment Collection</h2>
+        </div>
+        <p className="text-[#4b5563] text-xs mb-4 leading-relaxed">
+          Connect Stripe to send tenants a secure payment link when they{"'"}re late. Money goes directly to your account. A 0.5% platform fee is deducted — tenants pay nothing extra.
+        </p>
+        <StripeConnect connected={stripeConnected} connectedAt={stripeConnectAt} />
       </div>
 
       <button

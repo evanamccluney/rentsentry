@@ -21,6 +21,7 @@ import SituationIntakeButton from "@/components/dashboard/SituationIntakeButton"
 import DecisionMathPanel from "@/components/dashboard/DecisionMathPanel"
 import CalculationExplainer from "@/components/dashboard/CalculationExplainer"
 import GeneratePayOrQuitNotice from "@/components/dashboard/GeneratePayOrQuitNotice"
+import SendPaymentLinkButton from "@/components/dashboard/SendPaymentLinkButton"
 import { profileToEscalationRules } from "@/lib/escalation-rules"
 
 const TIER_CONFIG: Record<string, { label: string; dot: string; textColor: string; bg: string }> = {
@@ -94,7 +95,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
         cfk_review_day, attorney_review_day, repeat_offender_accelerator_days,
         pre_due_risk_outreach_enabled, pre_due_risk_review_days_before_due,
         require_attorney_before_notice, payment_plan_before_notice, custom_escalation_notes,
-        pm_display_name, pm_phone
+        pm_display_name, pm_phone, stripe_account_id
       `)
       .eq("id", user!.id)
       .single(),
@@ -238,6 +239,12 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
             {!showEscalationBanner && (
               <TenantDetailActions tenant={tenantForActions} />
             )}
+            <SendPaymentLinkButton
+              tenantId={t.id}
+              tenantName={t.name}
+              balanceDue={t.balance_due ?? 0}
+              stripeConnected={!!profile?.stripe_account_id}
+            />
             <SituationIntakeButton tenantId={t.id} tenantName={t.name} />
             <HardshipButton tenantId={t.id} tenantName={t.name} />
             <TenantAIChat tenantId={t.id} tenantName={t.name} />
