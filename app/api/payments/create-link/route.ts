@@ -37,23 +37,32 @@ export async function POST(req: NextRequest) {
   const amountDollars = tenant.balance_due > 0 ? tenant.balance_due : tenant.rent_amount
   const amountCents = Math.round(amountDollars * 100)
   const feeCents = Math.round(amountCents * FEE_RATE)
+  const totalCents = amountCents + feeCents // tenant pays rent + fee
 
-  // Destination charge — money flows through platform, Stripe fee paid by platform,
-  // application fee returned from connected account to platform
   const session = await stripe.checkout.sessions.create({
     mode: "payment",
     payment_method_types: ["card"],
-    line_items: [{
-      price_data: {
-        currency: "usd",
-        product_data: {
-          name: `Rent Payment — Unit ${tenant.unit}`,
-          description: `Payment to ${profile.pm_display_name || "your property manager"} via RentSentry`,
+    line_items: [
+      {
+        price_data: {
+          currency: "usd",
+          product_data: {
+            name: `Rent Payment — Unit ${tenant.unit}`,
+            description: `Payment to ${profile.pm_display_name || "your property manager"} via RentSentry`,
+          },
+          unit_amount: amountCents,
         },
-        unit_amount: amountCents,
+        quantity: 1,
       },
-      quantity: 1,
-    }],
+      {
+        price_data: {
+          currency: "usd",
+          product_data: { name: "Payment processing fee" },
+          unit_amount: feeCents,
+        },
+        quantity: 1,
+      },
+    ],
     metadata: { tenant_id: tenant.id, landlord_id: user.id },
     payment_intent_data: {
       application_fee_amount: feeCents,
