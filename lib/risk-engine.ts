@@ -1,13 +1,15 @@
+import { normalizeEscalationRules, type EscalationRules } from "@/lib/escalation-rules"
+
 export type RiskScore = 'green' | 'yellow' | 'red'
 
 export type RiskTier =
   | 'healthy'        // No balance, no risk signals
   | 'watch'          // Predictive — act before the 1st
   | 'reminder'       // Day 1-14: first/second offense, gentle nudge
-  | 'payment_plan'   // Day 15-20: some history or time pressure, structure repayment
-  | 'pay_or_quit'    // Day 15-30: legal notice required (issue by Day 15 for 1+ month owed)
-  | 'cash_for_keys'  // Day 30-45: offer cash to vacate vs court (optimal window)
-  | 'legal'          // Day 45+: file Unlawful Detainer
+  | 'payment_plan'   // Day 5-14: structured cure path before legal escalation
+  | 'pay_or_quit'    // Day 5+: formal notice review once a full rent cycle is unpaid
+  | 'cash_for_keys'  // Day 21-30: offer voluntary move-out vs court path
+  | 'legal'          // Day 30+ or 2+ months: attorney / filing review
 
 export type TenantPattern =
   | 'repeat_offender'   // Prior eviction or 5+ late payments — statistically won't self-correct
@@ -28,6 +30,7 @@ export interface TenantRiskInput {
   last_payment_date?: string  // ISO date
   rent_due_day?: number       // day of month rent is due (default: 1)
   days_until_due?: number     // pass in for pre-due precision; undefined = ignore
+  escalation_rules?: Partial<EscalationRules> | null
 }
 
 export interface RiskResult {
@@ -76,9 +79,10 @@ export function scoreTenant(t: TenantRiskInput): RiskResult {
     balance_due, rent_amount, late_payment_count,
     previous_delinquency, days_late_avg, card_expiry,
     payment_method, last_payment_date, rent_due_day,
-    days_until_due,
+    days_until_due, escalation_rules,
   } = t
 
+  const rules = normalizeEscalationRules(escalation_rules)
   const monthsOwed   = rent_amount > 0 ? balance_due / rent_amount : 0
   const daysPastDue  = estimateDaysPastDue(last_payment_date, rent_due_day ?? 1)
   const lateFee      = balance_due > 0 && daysPastDue > 5 ? Math.round(rent_amount * 0.05) : 0
@@ -117,17 +121,19 @@ export function scoreTenant(t: TenantRiskInput): RiskResult {
     months:  `${Math.round(monthsOwed * 10) / 10} month${monthsOwed !== 1 ? 's' : ''}`,
     days:    daysPastDue > 0 ? `${daysPastDue} days past due` : 'balance outstanding',
   }
+  const repeatLegalDay = Math.max(
+    rules.payOrQuitDay,
+    rules.attorneyReviewDay - rules.repeatOffenderAcceleratorDays
+  )
 
   // ── LEGAL — File Unlawful Detainer ────────────────────────────────────────
-  // 3+ months owed regardless of days.
-  // 2+ months owed AND either repeat offender or 45+ days past due.
-  // 1.5+ months owed AND 60+ days past due — two full billing cycles ignored.
-  // Source: NBER (2024), practitioner consensus — file between Day 45–60 max.
+  // 2+ months owed regardless of days: do not wait for another cycle.
+  // 1+ month owed and 30+ days past due: the notice/cure window should already be
+  // exhausted in most jurisdictions if the PM acted promptly after grace.
   if (
-    monthsOwed >= 3 ||
-    (monthsOwed >= 2 && repeatOffender) ||
-    (monthsOwed >= 2 && daysPastDue >= 45) ||
-    (monthsOwed >= 1.5 && daysPastDue >= 60)
+    monthsOwed >= 2 ||
+    (monthsOwed >= 1 && daysPastDue >= rules.attorneyReviewDay) ||
+    (monthsOwed >= 1 && repeatOffender && daysPastDue >= repeatLegalDay)
   ) {
     const reasons: string[] = [
       `${fmt.months} rent outstanding (${fmt.balance})`,
@@ -155,13 +161,12 @@ export function scoreTenant(t: TenantRiskInput): RiskResult {
     }
   }
 
-  // ── CASH FOR KEYS — Day 30-45 ─────────────────────────────────────────────
-  // Optimal CFK window: Day 30–45. Tenant anxiety is highest, no attorney yet,
-  // eviction not yet on public record. Source: RentPrep, BiggerPockets practitioners.
+  // ── CASH FOR KEYS — Day 21-30 ─────────────────────────────────────────────
+  // Review CFK after the formal-notice decision point, before waiting into a
+  // second full unpaid month. This is voluntary and should be reviewed locally.
   if (
-    (monthsOwed >= 1.5 && daysPastDue >= 30) ||
-    (monthsOwed >= 1.5 && repeatOffender) ||
-    (monthsOwed >= 1 && daysPastDue >= 45)
+    (monthsOwed >= 1 && daysPastDue >= rules.cfkReviewDay) ||
+    (monthsOwed >= 1.5 && repeatOffender)
   ) {
     const reasons: string[] = [
       `${fmt.balance} outstanding (${fmt.months})`,
@@ -189,16 +194,16 @@ export function scoreTenant(t: TenantRiskInput): RiskResult {
     }
   }
 
-  // ── PAY OR QUIT — Day 15-30 ───────────────────────────────────────────────
-  // Issue by Day 15 for 1+ month owed — starts clock, most tenants pay within 3–7 days.
-  // Waiting past Day 20 gives tenants more runway to prepare delay tactics.
-  // Source: NBER (2024), practitioner consensus.
+  // ── PAY OR QUIT — Day 5+ ─────────────────────────────────────────────────
+  // Professional operators usually prepare/serve the formal nonpayment notice
+  // shortly after the lease grace period. It starts the legal clock while still
+  // giving the tenant the statutory cure period.
   if (
-    monthsOwed >= 2 ||
-    (monthsOwed >= 1 && daysPastDue >= 15) ||
+    (monthsOwed >= 1 && daysPastDue >= rules.payOrQuitDay) ||
     (monthsOwed >= 1 && repeatOffender) ||
-    (balance_due > 0 && daysPastDue >= 25 && (late_payment_count >= 3 || repeatOffender)) ||
-    (balance_due > 0 && repeatOffender && daysPastDue >= 15)
+    monthsOwed >= 1.5 ||
+    (balance_due > 0 && daysPastDue >= rules.paymentPlanDay + 5 && (late_payment_count >= 3 || repeatOffender)) ||
+    (balance_due > 0 && repeatOffender && daysPastDue >= rules.payOrQuitDay)
   ) {
     const reasons: string[] = [
       `${fmt.balance} outstanding — ${fmt.days}`,
@@ -227,10 +232,10 @@ export function scoreTenant(t: TenantRiskInput): RiskResult {
     }
   }
 
-  // ── PAYMENT PLAN — Day 15-25 ──────────────────────────────────────────────
-  // Structure repayment before it escalates. Balance + time pressure (15+ days),
+  // ── PAYMENT PLAN — Day 5-14 ───────────────────────────────────────────────
+  // Structure repayment before it escalates. Balance + time pressure (5+ days),
   // existing late history, OR a full month owed.
-  if (balance_due > 0 && (monthsOwed >= 1 || daysPastDue >= 15 || hasHistory)) {
+  if (balance_due > 0 && (daysPastDue >= rules.paymentPlanDay || hasHistory || partialPayer)) {
     const reasons: string[] = [`${fmt.balance} outstanding`]
     if (daysPastDue >= 15)       reasons.push(`${daysPastDue} days since rent was due`)
     if (late_payment_count >= 2)  reasons.push(`${late_payment_count} late payments in history`)

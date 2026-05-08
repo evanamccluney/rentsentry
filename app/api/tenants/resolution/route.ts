@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
 
-  const { tenantId, resolution_status } = await req.json()
+  const { tenantId, resolution_status, note } = await req.json()
   if (!tenantId) return NextResponse.json({ error: "Missing tenantId" }, { status: 400 })
   if (!VALID_STATUSES.includes(resolution_status)) {
     return NextResponse.json({ error: "Invalid resolution_status" }, { status: 400 })
@@ -25,6 +25,22 @@ export async function POST(req: NextRequest) {
     .eq("user_id", user.id)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  await supabase.from("interventions").insert({
+    tenant_id: tenantId,
+    user_id: user.id,
+    type: "resolution_outcome",
+    status: resolution_status ?? "cleared",
+    sent_at: new Date().toISOString(),
+    notes: note?.trim()
+      ? `Outcome updated: ${resolution_status ?? "cleared"}\n${note.trim()}`
+      : `Outcome updated: ${resolution_status ?? "cleared"}`,
+    snapshot: {
+      source: "resolution_status",
+      resolution_status,
+      outcome_logged_at: new Date().toISOString(),
+    },
+  })
 
   return NextResponse.json({ ok: true, resolution_status })
 }

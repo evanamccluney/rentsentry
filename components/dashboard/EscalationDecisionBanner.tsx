@@ -4,6 +4,12 @@ import { toast } from "sonner"
 import { AlertTriangle, HandCoins, Scale, X, Send, TrendingDown } from "lucide-react"
 import type { EconomicsResult } from "@/lib/eviction-economics"
 import GenerateCFKLetter from "@/components/dashboard/GenerateCFKLetter"
+import CalculationExplainer from "@/components/dashboard/CalculationExplainer"
+
+function moneyRange(low: number, high: number) {
+  if (Math.round(low) === Math.round(high)) return `$${Math.round(low).toLocaleString()}`
+  return `$${Math.round(low).toLocaleString()}-$${Math.round(high).toLocaleString()}`
+}
 
 const SMS_PREVIEWS: Record<string, (name: string) => string> = {
   cash_for_keys: (name) =>
@@ -101,7 +107,6 @@ export default function EscalationDecisionBanner({ tenant, econ, propertyState }
 
   return (
     <>
-      {/* SMS Review Modal */}
       {pendingAction && msgFn && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => setPendingAction(null)}>
           <div className="bg-[#111827] border border-white/10 rounded-2xl w-full max-w-md mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -112,13 +117,13 @@ export default function EscalationDecisionBanner({ tenant, econ, propertyState }
                   <X size={16} />
                 </button>
               </div>
-              <p className="text-[#4b5563] text-xs mb-5">Prepared by system · snapshot saved to history</p>
+              <p className="text-[#4b5563] text-xs mb-5">Prepared by system - snapshot saved to history</p>
 
               <div className="flex gap-3 text-sm items-baseline mb-4">
                 <span className="text-[#4b5563] w-14 shrink-0 text-xs uppercase tracking-wide">To</span>
                 {hasPhone
                   ? <span className="text-white font-mono">{tenant.phone}</span>
-                  : <span className="text-orange-400 text-xs">No phone number on file — action will be logged only</span>
+                  : <span className="text-orange-400 text-xs">No phone number on file - action will be logged only</span>
                 }
               </div>
 
@@ -126,7 +131,7 @@ export default function EscalationDecisionBanner({ tenant, econ, propertyState }
                 <p className="text-[#d1d5db] text-sm leading-relaxed">{msgBody}</p>
               </div>
               <div className="flex justify-between items-center mb-4">
-                <span className="text-[#2e3a50] text-[10px]">SMS · {msgBody.length} chars · 1 segment</span>
+                <span className="text-[#2e3a50] text-[10px]">SMS - {msgBody.length} chars - 1 segment</span>
                 <span className="text-[#2e3a50] text-[10px]">Sent from RentSentry</span>
               </div>
 
@@ -143,7 +148,7 @@ export default function EscalationDecisionBanner({ tenant, econ, propertyState }
                   className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white bg-blue-500 hover:bg-blue-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   <Send size={13} />
-                  {loading ? "Sending…" : "Approve & Send SMS"}
+                  {loading ? "Sending..." : "Approve & Send SMS"}
                 </button>
               </div>
             </div>
@@ -151,49 +156,83 @@ export default function EscalationDecisionBanner({ tenant, econ, propertyState }
         </div>
       )}
 
-      {/* Banner */}
       <div className="bg-red-500/5 border border-red-500/25 rounded-2xl p-5 mb-5">
         <div className="flex items-start gap-3 mb-4">
           <AlertTriangle size={18} className="text-red-400 shrink-0 mt-0.5" />
-          <div>
-            <h2 className="text-red-300 font-semibold text-sm">Critical Escalation — Action Required</h2>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-red-300 font-semibold text-sm">Critical Escalation - Action Required</h2>
             <p className="text-[#9ca3af] text-xs mt-0.5">
               {tenant.name} owes {Math.round(monthsOwed * 10) / 10} months of rent (${tenant.balance_due.toLocaleString()}). Choose how to proceed.
             </p>
           </div>
+          <CalculationExplainer
+            compact
+            sections={[
+              {
+                title: "Ledger balance",
+                body: "The amount owed and monthly rent come from the tenant ledger/import. Those are the only hard financial inputs in this panel.",
+                items: [
+                  `Ledger balance: $${tenant.balance_due.toLocaleString()}`,
+                  `Monthly rent: $${tenant.rent_amount.toLocaleString()}`,
+                ],
+              },
+              {
+                title: "Court path estimate",
+                body: "The court path range combines rent at risk during the modeled timeline with court, attorney, lockout, turnover, contested-risk, and damage assumptions.",
+                items: [
+                  `Displayed range: ${moneyRange(econ.blendedEvictionRange.low, econ.blendedEvictionRange.high)}`,
+                  `Midpoint model: $${econ.blendedEviction.toLocaleString()}`,
+                  `Confidence: ${econ.estimateConfidence}`,
+                ],
+              },
+              {
+                title: "Cash for Keys estimate",
+                body: "The CFK range combines a negotiated offer range with rent at risk while the tenant vacates and standard turnover assumptions.",
+                items: [
+                  `Displayed range: ${moneyRange(econ.cfk.low, econ.cfk.high)}`,
+                  `Offer midpoint: $${econ.cfk.offerAmount.toLocaleString()}`,
+                  `Break-even offer: $${econ.breakEvenOffer.toLocaleString()}`,
+                ],
+              },
+              {
+                title: "What to verify",
+                body: "Before acting, verify the local numbers that can materially change the recommendation.",
+                items: ["County filing/service fees", "Attorney quote", "Sheriff or lockout fee", "Local court timeline", "State/local tenant rules"],
+              },
+            ]}
+            note="Ranges are decision support, not invoices or guaranteed outcomes."
+          />
         </div>
 
-        {/* Economics summary strip */}
         <div className="grid grid-cols-3 gap-2 mb-4">
           <div className="bg-red-500/8 border border-red-500/15 rounded-xl px-3 py-2.5 text-center">
-            <div className="text-[#4b5563] text-[10px] uppercase tracking-wide mb-1">Eviction cost</div>
-            <div className="text-red-400 font-bold tabular-nums text-sm">~${econ.blendedEviction.toLocaleString()}</div>
-            <div className="text-[#374151] text-[10px] mt-0.5">~{econ.uncontested.lostRentWeeks} wk timeline</div>
+            <div className="text-[#4b5563] text-[10px] uppercase tracking-wide mb-1">Court path est.</div>
+            <div className="text-red-400 font-bold tabular-nums text-sm">{moneyRange(econ.blendedEvictionRange.low, econ.blendedEvictionRange.high)}</div>
+            <div className="text-[#374151] text-[10px] mt-0.5">{econ.estimateConfidence} confidence</div>
           </div>
           <div className="bg-emerald-500/8 border border-emerald-500/15 rounded-xl px-3 py-2.5 text-center">
-            <div className="text-[#4b5563] text-[10px] uppercase tracking-wide mb-1">Cash for Keys</div>
-            <div className="text-emerald-400 font-bold tabular-nums text-sm">~${econ.cfk.total.toLocaleString()}</div>
+            <div className="text-[#4b5563] text-[10px] uppercase tracking-wide mb-1">Cash for Keys est.</div>
+            <div className="text-emerald-400 font-bold tabular-nums text-sm">{moneyRange(econ.cfk.low, econ.cfk.high)}</div>
             <div className="text-[#374151] text-[10px] mt-0.5">~{econ.cfk.weeksTotal} wk timeline</div>
           </div>
           <div className={`rounded-xl px-3 py-2.5 text-center border ${econ.cfkSavings > 0 ? "bg-white/5 border-white/10" : "bg-red-500/8 border-red-500/15"}`}>
-            <div className="text-[#4b5563] text-[10px] uppercase tracking-wide mb-1">CFK saves</div>
+            <div className="text-[#4b5563] text-[10px] uppercase tracking-wide mb-1">Modeled savings</div>
             <div className={`font-bold tabular-nums text-sm ${econ.cfkSavings > 0 ? "text-white" : "text-red-400"}`}>
-              {econ.cfkSavings > 0 ? `$${econ.cfkSavings.toLocaleString()}` : "—"}
+              {econ.cfkSavingsRange.low > 0 ? moneyRange(econ.cfkSavingsRange.low, econ.cfkSavingsRange.high) : econ.cfkSavings > 0 ? `$${econ.cfkSavings.toLocaleString()}` : "-"}
             </div>
             <div className="text-[#374151] text-[10px] mt-0.5">
-              {econ.cfkSavings > 0 ? `max offer $${econ.breakEvenOffer.toLocaleString()}` : "eviction cheaper"}
+              {econ.cfkSavings > 0 ? `max offer $${econ.breakEvenOffer.toLocaleString()}` : "court path cheaper"}
             </div>
           </div>
         </div>
 
-        {/* Recommendation — single line + collapsible Why */}
         <div className="mb-4">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 flex-wrap">
               <TrendingDown size={13} className={econ.recommendation === "cfk" ? "text-emerald-400 shrink-0" : "text-red-400 shrink-0"} />
               <span className="text-white font-semibold text-sm">{recHeadline}</span>
               {econ.cfkSavings > 0 && (
-                <span className="text-[#6b7280] text-xs">— saves ~${econ.cfkSavings.toLocaleString()} vs eviction</span>
+                <span className="text-[#6b7280] text-xs">midpoint saves ${econ.cfkSavings.toLocaleString()} vs court path</span>
               )}
               <span className={`text-[10px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded ${
                 econ.recommendationStrength === "strong" ? "bg-white/10 text-white" :
@@ -207,7 +246,7 @@ export default function EscalationDecisionBanner({ tenant, econ, propertyState }
               onClick={() => setShowWhy(v => !v)}
               className="text-[#4b5563] text-xs hover:text-white transition-colors shrink-0"
             >
-              {showWhy ? "Hide ↑" : "Why? ↓"}
+              {showWhy ? "Hide" : "Why?"}
             </button>
           </div>
 
@@ -219,16 +258,18 @@ export default function EscalationDecisionBanner({ tenant, econ, propertyState }
                   {r}
                 </div>
               ))}
+              <div className="text-[#4b5563] text-[11px] mt-2">
+                Assumptions: {econ.assumptions.slice(1, 4).join(" ")}
+              </div>
               {econ.recommendation === "cfk" && (
                 <div className="text-[#4b5563] text-[11px] mt-1">
-                  {propertyState ?? "National avg"} · max viable offer: <span className="text-white font-medium">${econ.breakEvenOffer.toLocaleString()}</span>
+                  {propertyState ?? "National avg"} - max viable offer: <span className="text-white font-medium">${econ.breakEvenOffer.toLocaleString()}</span>
                 </div>
               )}
             </div>
           )}
         </div>
 
-        {/* Action buttons */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <button
             onClick={() => setPendingAction("cash_for_keys")}
@@ -261,7 +302,7 @@ export default function EscalationDecisionBanner({ tenant, econ, propertyState }
         </div>
         <div className="flex items-center justify-between mt-3">
           <p className="text-[#374151] text-xs">
-            Estimates based on {propertyState ?? "national"} averages. RentSentry never auto-sends legal notices — you review every action.
+            Estimates are decision support, not invoices. Verify county fees, attorney quotes, and local timelines before filing or making an offer. RentSentry never auto-sends legal notices.
           </p>
           {recAction === "cash_for_keys" && (
             <GenerateCFKLetter

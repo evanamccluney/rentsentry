@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     .eq("id", tenantId)
     .eq("user_id", user.id)
 
-  revalidateTag(`tenant-data-${user.id}`, 'max')
+  revalidateTag(`tenant-data-${user.id}`)
 
   return NextResponse.json({
     ok: true,

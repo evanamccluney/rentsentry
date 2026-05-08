@@ -1,0 +1,12 @@
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS escalation_preset text DEFAULT 'professional';
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS reminder_day integer DEFAULT 1;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS payment_plan_day integer DEFAULT 5;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS pay_or_quit_day integer DEFAULT 5;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS cfk_review_day integer DEFAULT 21;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS attorney_review_day integer DEFAULT 30;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS pre_due_risk_outreach_enabled boolean DEFAULT true;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS pre_due_risk_review_days_before_due integer DEFAULT 5;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS repeat_offender_accelerator_days integer DEFAULT 7;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS require_attorney_before_notice boolean DEFAULT true;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS payment_plan_before_notice boolean DEFAULT true;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS custom_escalation_notes text;

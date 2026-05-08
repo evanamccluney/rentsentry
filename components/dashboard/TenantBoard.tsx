@@ -6,11 +6,16 @@ import {
   CreditCard, ShieldAlert, Upload, Search, X, FileText, Bell,
   Scale, HandCoins, CalendarClock, Send, Plus, Pencil,
   ArrowRight, Zap, Pause, Play, CheckCircle2, Activity, TrendingUp,
-  DollarSign, Download, Lightbulb, CornerDownRight,
+  DollarSign, Download, Lightbulb, CornerDownRight, ClipboardList,
 } from "lucide-react"
 import Link from "next/link"
-import type { RiskTier } from "@/lib/risk-engine"
+import { scoreTenant, type RiskTier } from "@/lib/risk-engine"
+import type { EscalationRules } from "@/lib/escalation-rules"
+import { calculateEconomics } from "@/lib/eviction-economics"
+import AIMessageContent from "./AIMessageContent"
 import TenantFormModal from "./TenantFormModal"
+import SituationIntakeModal from "./SituationIntakeModal"
+import DecisionMathPanel from "./DecisionMathPanel"
 import { STATE_RULES, generatePayOrQuitPDF } from "@/lib/pay-or-quit"
 
 // ── Email previews ────────────────────────────────────────────────────────────
@@ -62,6 +67,10 @@ interface Tenant {
   phone: string
   rent_amount: number
   balance_due: number
+  rent_due_day?: number
+  lease_grace_days?: number
+  notice_service_method?: string | null
+  local_protection_notes?: string | null
   risk_score: string
   tier: RiskTier
   recommended_action: string
@@ -87,6 +96,7 @@ interface Props {
   paymentsThisMonth: PaymentRecord[]
   autoMode: boolean
   landlordEmail?: string
+  escalationRules?: EscalationRules
 }
 
 // ── Tier config ───────────────────────────────────────────────────────────────
@@ -277,7 +287,7 @@ const ACTIVITY_TYPE_LABELS: Record<string, string> = {
 // "Next: ..." instruction shown in the next-action box for needs_review tenants
 const APPROVAL_MESSAGE: Partial<Record<RiskTier, string>> = {
   legal:        "Next: Review eviction packet",
-  pay_or_quit:  "Next: Send Pay or Quit — fastest way to collect",
+  pay_or_quit:  "Next: Review & send Pay or Quit notice",
   cash_for_keys:"Next: Review Cash for Keys offer",
   payment_plan: "Next: Review payment plan",
   reminder:     "Next: Send payment reminder",
@@ -488,7 +498,7 @@ const ACTION_QUEUED_TOAST: Record<string, string> = {
 // Tier-specific primary button label for "Review & Send"
 const REVIEW_BUTTON_LABEL: Partial<Record<RiskTier, string>> = {
   legal:        "Review & Send Packet",
-  pay_or_quit:  "Send Pay or Quit — Get Paid",
+  pay_or_quit:  "Review & Send Notice",
   cash_for_keys:"Review & Send Offer",
   payment_plan: "Review & Send Plan",
   reminder:     "Review & Send Reminder",
@@ -498,7 +508,7 @@ const REVIEW_BUTTON_LABEL: Partial<Record<RiskTier, string>> = {
 // Helper line shown under primary button explaining what happens after click
 const AFTER_SEND_LABEL: Partial<Record<RiskTier, string>> = {
   legal:        "Sent to tenant immediately after your approval",
-  pay_or_quit:  "Most tenants pay within 7 days of receiving this — sent immediately on approval",
+  pay_or_quit:  "Prepared for your review before anything is sent",
   cash_for_keys:"Sent to tenant immediately after your approval",
   payment_plan: "Sent to tenant immediately after your approval",
   reminder:     "Scheduled for delivery · you will be notified when sent",
@@ -545,8 +555,8 @@ function buildSnapshot(t: Tenant) {
 // ── Avatar helpers ────────────────────────────────────────────────────────────
 
 const AVATAR_COLORS = [
-  "bg-blue-500", "bg-violet-500", "bg-emerald-500", "bg-orange-500",
-  "bg-pink-500", "bg-teal-500", "bg-indigo-500", "bg-amber-500", "bg-cyan-500", "bg-rose-500",
+  "bg-[#1e3a5f]", "bg-[#2d1e5f]", "bg-[#1e5f3a]", "bg-[#5f3a1e]",
+  "bg-[#5f1e3a]", "bg-[#1e4a5f]", "bg-[#3a1e5f]", "bg-[#4a3a1e]", "bg-[#1e5f5f]", "bg-[#5f1e1e]",
 ]
 function avatarColor(name: string) {
   const hash = name.split("").reduce((a, c) => a + c.charCodeAt(0), 0)
@@ -907,19 +917,21 @@ function parseSMSDraft(raw: string): { display: string; draft: string | null } {
 }
 
 function TenantAIModal({ tenant, onClose }: { tenant: Tenant; onClose: () => void }) {
+  const router = useRouter()
   const [input, setInput] = useState("")
   const [history, setHistory] = useState<ChatMessage[]>([])
   const [loading, setLoading] = useState(false)
   const [smsDrafts, setSmsDrafts] = useState<Record<number, string>>({})
   const [sendingIdx, setSendingIdx] = useState<number | null>(null)
+  const [intakeOpen, setIntakeOpen] = useState(false)
   const bottomRef = React.useRef<HTMLDivElement>(null)
 
   React.useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [history, loading])
 
-  async function send() {
-    const msg = input.trim()
+  async function send(text?: string) {
+    const msg = (text ?? input).trim()
     if (!msg || loading) return
     setInput("")
     const next: ChatMessage[] = [...history, { role: "user", content: msg }]
@@ -976,6 +988,7 @@ function TenantAIModal({ tenant, onClose }: { tenant: Tenant; onClose: () => voi
     : 0
 
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
       <div
         className="bg-[#111827] border border-white/10 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-lg shadow-2xl flex flex-col"
@@ -1007,16 +1020,25 @@ function TenantAIModal({ tenant, onClose }: { tenant: Tenant; onClose: () => voi
         <div className="flex-1 overflow-y-auto p-5 space-y-4 min-h-0">
           {history.length === 0 && (
             <div className="space-y-2">
-              <p className="text-[#4b5563] text-xs text-center mb-4">Ask anything about this tenant — the AI knows their full history.</p>
+              <p className="text-[#9ca3af] text-xs font-medium text-center">Tell AI what changed since the ledger does not show the full story.</p>
+              <p className="text-[#4b5563] text-xs text-center mb-4">Use a button for the common situation, or type the exact tenant response below.</p>
+              <button
+                onClick={() => setIntakeOpen(true)}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 hover:bg-amber-500/15 transition-colors text-xs font-semibold"
+              >
+                <ClipboardList size={13} />
+                Log full situation
+              </button>
               {[
-                "Tenant said he'll pay next week",
-                "Should I offer a payment plan?",
-                "Tenant went quiet after my last message",
-                "Is it time to send Pay or Quit?",
+                "Tenant promised to pay",
+                "Tenant stopped responding",
+                "Tenant disputed the balance",
+                "Tenant mentioned repair issues",
+                "Help me decide the next step",
               ].map(suggestion => (
                 <button
                   key={suggestion}
-                  onClick={() => { setInput(suggestion); }}
+                  onClick={() => send(suggestion)}
                   className="w-full text-left text-xs px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.06] text-[#6b7280] hover:text-white hover:border-white/10 transition-colors"
                 >
                   {suggestion}
@@ -1038,7 +1060,7 @@ function TenantAIModal({ tenant, onClose }: { tenant: Tenant; onClose: () => voi
                     ? "bg-blue-500/20 text-white rounded-br-sm"
                     : "bg-white/[0.05] text-[#d1d5db] rounded-bl-sm border border-white/[0.06]"
                 }`}>
-                  {msg.content}
+                  {msg.role === "assistant" ? <AIMessageContent content={msg.content} /> : msg.content}
                 </div>
               </div>
 
@@ -1109,7 +1131,7 @@ function TenantAIModal({ tenant, onClose }: { tenant: Tenant; onClose: () => voi
               className="flex-1 bg-[#0d1117] border border-white/10 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-white/20 placeholder:text-[#374151]"
             />
             <button
-              onClick={send}
+              onClick={() => send()}
               disabled={loading || !input.trim()}
               className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/20 text-amber-400 hover:bg-amber-500/25 transition-colors disabled:opacity-40 flex items-center justify-center shrink-0"
             >
@@ -1119,6 +1141,18 @@ function TenantAIModal({ tenant, onClose }: { tenant: Tenant; onClose: () => voi
         </div>
       </div>
     </div>
+    {intakeOpen && (
+      <SituationIntakeModal
+        tenantId={tenant.id}
+        tenantName={tenant.name}
+        onClose={() => setIntakeOpen(false)}
+        onSaved={() => {
+          setIntakeOpen(false)
+          router.refresh()
+        }}
+      />
+    )}
+    </>
   )
 }
 
@@ -1579,6 +1613,7 @@ function TenantCard({
   onTogglePause,
   onPaymentRecorded,
   onActionExecuted,
+  escalationRules,
 }: {
   t: Tenant
   properties: { id: string; name: string; address?: string; state?: string }[]
@@ -1587,6 +1622,7 @@ function TenantCard({
   onTogglePause: () => void
   onPaymentRecorded: () => void
   onActionExecuted: () => void
+  escalationRules?: EscalationRules
 }) {
   const [loading, setLoading] = useState<string | null>(null)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
@@ -1626,6 +1662,25 @@ function TenantCard({
   const hasBalance = (t.balance_due ?? 0) > 0
   // "Review & Send" only applies to tiers requiring PM approval, not already sent/queued/paused
   const canReviewSend = t.action_type && effectiveStatus === "needs_review"
+  const cardRisk = scoreTenant({
+    days_late_avg: t.days_late_avg ?? 0,
+    late_payment_count: t.late_payment_count ?? 0,
+    previous_delinquency: t.previous_delinquency ?? false,
+    card_expiry: t.card_expiry ?? undefined,
+    payment_method: t.payment_method ?? undefined,
+    balance_due: t.balance_due ?? 0,
+    rent_amount: t.rent_amount ?? 0,
+    last_payment_date: t.last_payment_date ?? undefined,
+    rent_due_day: t.rent_due_day ?? 1,
+    escalation_rules: escalationRules,
+  })
+  const cardEconomics = calculateEconomics({
+    rentAmount: t.rent_amount ?? 0,
+    monthsOwed: (t.rent_amount ?? 0) > 0 ? (t.balance_due ?? 0) / (t.rent_amount ?? 1) : 0,
+    previousDelinquency: t.previous_delinquency ?? false,
+    latePaymentCount: t.late_payment_count ?? 0,
+    state: t.properties?.state,
+  })
 
   async function trigger(type: string) {
     setLoading(type)
@@ -1683,6 +1738,7 @@ function TenantCard({
             id: t.id, name: t.name, email: t.email, phone: t.phone,
             unit: t.unit, property_id: t.properties?.id ?? "",
             rent_amount: String(t.rent_amount ?? ""), balance_due: String(t.balance_due ?? ""),
+            rent_due_day: String(t.rent_due_day ?? 1),
             payment_method: t.payment_method ?? "unknown", card_expiry: t.card_expiry ?? "",
             last_payment_date: t.last_payment_date ?? "",
             days_late_avg: String(t.days_late_avg ?? 0),
@@ -1843,6 +1899,17 @@ function TenantCard({
         )}
 
         {/* ── Row 5: Actions ──────────────────────────────────────────────────── */}
+        <DecisionMathPanel
+          balanceDue={t.balance_due ?? 0}
+          rentAmount={t.rent_amount ?? 0}
+          rentDueDay={t.rent_due_day ?? 1}
+          leaseGraceDays={t.lease_grace_days ?? 0}
+          risk={cardRisk}
+          economics={cardEconomics}
+          state={t.properties?.state}
+          compact
+        />
+
         <div className="flex items-center gap-2">
           {/* CFK sent/outcome: show Update Outcome instead of Review & Send */}
           {isCfkSent && (
@@ -1883,19 +1950,21 @@ function TenantCard({
           {/* AI Advisor */}
           <button
             onClick={() => setAiOpen(true)}
-            className="w-8 h-8 rounded-xl text-amber-400/60 bg-amber-500/5 hover:bg-amber-500/15 border border-amber-500/10 hover:border-amber-500/20 transition-colors flex items-center justify-center shrink-0"
-            title="AI advisor — ask about this tenant"
+            className="h-8 px-3 rounded-xl text-xs font-semibold text-amber-300 bg-amber-500/5 hover:bg-amber-500/15 border border-amber-500/10 hover:border-amber-500/20 transition-colors flex items-center justify-center gap-1.5 shrink-0"
+            title="Ask AI about this tenant"
           >
             <Lightbulb size={12} />
+            Ask AI
           </button>
 
           {/* Tertiary: Pause / Resume */}
           <button
             onClick={onTogglePause}
-            className="w-8 h-8 rounded-xl text-[#4b5563] bg-white/5 hover:bg-white/10 border border-white/5 transition-colors flex items-center justify-center shrink-0"
+            className="h-8 px-3 rounded-xl text-xs font-semibold text-[#6b7280] bg-white/5 hover:bg-white/10 border border-white/5 transition-colors flex items-center justify-center gap-1.5 shrink-0"
             title={isPaused ? "Resume automation" : "Pause automation"}
           >
             {isPaused ? <Play size={12} /> : <Pause size={12} />}
+            {isPaused ? "Resume" : "Pause"}
           </button>
 
           {/* Details link */}
@@ -2150,6 +2219,7 @@ function Section({
   onPaymentRecorded,
   onActionExecuted,
   autoMode,
+  escalationRules,
 }: {
   tier: RiskTier
   tenants: Tenant[]
@@ -2161,6 +2231,7 @@ function Section({
   onPaymentRecorded: () => void
   onActionExecuted: () => void
   autoMode: boolean
+  escalationRules?: EscalationRules
 }) {
   const config = TIER_CONFIG[tier]
   const [showReviewModal, setShowReviewModal] = useState(false)
@@ -2259,6 +2330,7 @@ function Section({
                     onTogglePause={() => onTogglePause(t.id)}
                     onPaymentRecorded={onPaymentRecorded}
                     onActionExecuted={onActionExecuted}
+                    escalationRules={escalationRules}
                   />
                 ))}
               </div>
@@ -2277,6 +2349,7 @@ function Section({
               onTogglePause={() => onTogglePause(t.id)}
               onPaymentRecorded={onPaymentRecorded}
               onActionExecuted={onActionExecuted}
+              escalationRules={escalationRules}
             />
           ))}
         </div>
@@ -2287,7 +2360,7 @@ function Section({
 
 // ── TenantBoard ───────────────────────────────────────────────────────────────
 
-export default function TenantBoard({ tenants, properties, recentActivity, paymentsThisMonth, autoMode, landlordEmail }: Props) {
+export default function TenantBoard({ tenants, properties, recentActivity, paymentsThisMonth, autoMode, landlordEmail, escalationRules }: Props) {
   const router = useRouter()
   const [search, setSearch] = useState("")
   const [propertyFilter, setPropertyFilter] = useState("")
@@ -2565,6 +2638,7 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
           onPaymentRecorded={handlePaymentRecorded}
           onActionExecuted={handleActionExecuted}
           autoMode={autoMode}
+          escalationRules={escalationRules}
         />
       ))}
 

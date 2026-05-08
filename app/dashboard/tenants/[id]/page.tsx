@@ -3,7 +3,7 @@ import { scoreTenant } from "@/lib/risk-engine"
 import { calculateEconomics } from "@/lib/eviction-economics"
 import { notFound } from "next/navigation"
 import Link from "next/link"
-import { ArrowLeft, Scale, HandCoins, Bell, CalendarClock, FileText, CreditCard, TrendingDown, AlertTriangle } from "lucide-react"
+import { ArrowLeft, Scale, FileText, TrendingDown, AlertTriangle } from "lucide-react"
 import TenantDetailActions from "@/components/dashboard/TenantDetailActions"
 import TenantActionsPanel from "@/components/dashboard/TenantActionsPanel"
 import TenantActivityLog from "@/components/dashboard/TenantActivityLog"
@@ -17,6 +17,11 @@ import EscalationTimeline from "@/components/dashboard/EscalationTimeline"
 import LeaseRenewalButton from "@/components/dashboard/LeaseRenewalButton"
 import PaymentPlanTracker from "@/components/dashboard/PaymentPlanTracker"
 import CfkFollowUpBanner from "@/components/dashboard/CfkFollowUpBanner"
+import SituationIntakeButton from "@/components/dashboard/SituationIntakeButton"
+import DecisionMathPanel from "@/components/dashboard/DecisionMathPanel"
+import CalculationExplainer from "@/components/dashboard/CalculationExplainer"
+import GeneratePayOrQuitNotice from "@/components/dashboard/GeneratePayOrQuitNotice"
+import { profileToEscalationRules } from "@/lib/escalation-rules"
 
 const TIER_CONFIG: Record<string, { label: string; dot: string; textColor: string; bg: string }> = {
   legal:        { label: "Eviction Recommended",     dot: "bg-red-500",     textColor: "text-red-400",     bg: "bg-red-500/10 border-red-500/20" },
@@ -28,22 +33,6 @@ const TIER_CONFIG: Record<string, { label: string; dot: string; textColor: strin
   healthy:      { label: "Healthy",                  dot: "bg-emerald-500", textColor: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
 }
 
-
-const INTERVENTION_LABELS: Record<string, string> = {
-  payment_reminder:     "Payment reminder sent",
-  proactive_reminder:   "Proactive reminder sent",
-  payment_method_alert: "Payment method alert sent",
-  split_pay_offer:      "Payment plan offered",
-  cash_for_keys:        "Cash for Keys offered",
-  legal_packet:         "Legal notice sent",
-  card_expiry_alert:    "Payment reminder sent",
-  card_expiry_30:       "Payment reminder sent",
-  card_expiry_7:        "Payment reminder sent",
-  no_payment_method:    "Payment method alert sent",
-  pre_due_urgent:       "Urgent pre-due reminder sent",
-  pre_due_delinquent_warning: "Pre-due balance warning sent",
-  hardship_checkin:     "Hardship check-in logged",
-}
 
 const AVATAR_COLORS = [
   "bg-blue-500","bg-violet-500","bg-emerald-500","bg-orange-500",
@@ -64,13 +53,28 @@ function daysUntil(iso?: string | null) {
   if (!iso) return null
   return Math.ceil((new Date(iso).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
 }
+function moneyRange(low: number, high: number) {
+  if (Math.round(low) === Math.round(high)) return `$${Math.round(low).toLocaleString()}`
+  return `$${Math.round(low).toLocaleString()}-$${Math.round(high).toLocaleString()}`
+}
+
+type TenantProperty = { name?: string | null; id?: string | null; state?: string | null; address?: string | null }
+type TenantRecord = {
+  properties?: TenantProperty | null
+  notes?: string | null
+  resolution_status?: string | null
+  lease_grace_days?: number | null
+  notice_service_method?: string | null
+  local_protection_notes?: string | null
+}
 
 export default async function TenantDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  const { data: t } = await supabase
+  const [{ data: t }, { data: profile }] = await Promise.all([
+    supabase
     .from("tenants")
     .select(`
       id, unit, name, email, phone,
@@ -78,13 +82,28 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
       days_late_avg, late_payment_count, previous_delinquency,
       card_expiry, payment_method, last_payment_date,
       lease_start, lease_end, move_in_date, notes, resolution_status,
-      properties(name, id, state)
+      properties(name, id, state, address)
     `)
     .eq("id", id)
     .eq("user_id", user!.id)
-    .single()
+    .single(),
+    supabase
+      .from("profiles")
+      .select(`
+        escalation_preset, reminder_day, payment_plan_day, pay_or_quit_day,
+        cfk_review_day, attorney_review_day, repeat_offender_accelerator_days,
+        pre_due_risk_outreach_enabled, pre_due_risk_review_days_before_due,
+        require_attorney_before_notice, payment_plan_before_notice, custom_escalation_notes,
+        pm_display_name, pm_phone
+      `)
+      .eq("id", user!.id)
+      .single(),
+  ])
 
   if (!t) notFound()
+  const escalationRules = profileToEscalationRules(profile)
+  const tenant = t as typeof t & TenantRecord
+  const property = tenant.properties ?? null
 
   const { data: interventions } = await supabase
     .from("interventions")
@@ -126,12 +145,13 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
     rent_amount: t.rent_amount ?? 0,
     last_payment_date: t.last_payment_date ?? undefined,
     rent_due_day: t.rent_due_day ?? 1,
+    escalation_rules: escalationRules,
   })
 
   const tierCfg = TIER_CONFIG[risk.tier]
   const leaseExpiresDays = daysUntil(t.lease_end)
 
-  const pmState = (t.properties as any)?.state ?? null
+  const pmState = property?.state ?? null
   const rentAmount = t.rent_amount ?? 0
   const monthsOwed = rentAmount > 0 ? (t.balance_due ?? 0) / rentAmount : 0
 
@@ -143,14 +163,17 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
     state: pmState,
   })
 
-  const showCostComparison = risk.days_past_due >= 10 && (t.balance_due ?? 0) > 0
+  const showCostComparison = risk.days_past_due >= 3 && (t.balance_due ?? 0) > 0
 
-  const showEscalationBanner = monthsOwed >= 1.5
+  const showEscalationBanner =
+    (risk.tier === "cash_for_keys" || risk.tier === "legal") ||
+    (monthsOwed >= 1 && risk.days_past_due >= escalationRules.cfkReviewDay)
 
   // CFK follow-up: offer sent 5+ days ago, balance still outstanding, no accepted/resolved status after
   const lastCfk = interventions?.find(i => i.type === "cash_for_keys")
+  const nowMs = new Date().getTime()
   const daysSinceCfk = lastCfk
-    ? Math.floor((Date.now() - new Date(lastCfk.sent_at).getTime()) / (1000 * 60 * 60 * 24))
+    ? Math.floor((nowMs - new Date(lastCfk.sent_at).getTime()) / (1000 * 60 * 60 * 24))
     : 0
   const showCfkFollowUp = !!lastCfk && daysSinceCfk >= 5 && (t.balance_due ?? 0) > 0
 
@@ -183,7 +206,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
     reasons: risk.reasons,
     late_fee: risk.late_fee,
     requires_attorney: risk.requires_attorney,
-    property_name: (t.properties as any)?.name ?? null,
+    property_name: property?.name ?? null,
   }
 
   return (
@@ -203,7 +226,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
             <div>
               <h1 className="text-white text-xl font-bold">{t.name}</h1>
               <div className="text-[#6b7280] text-sm mt-0.5">
-                {(t.properties as any)?.name && <span>{(t.properties as any).name} · </span>}Unit {t.unit}
+                {property?.name && <span>{property.name} · </span>}Unit {t.unit}
               </div>
               <div className="flex items-center gap-4 mt-1">
                 {t.email && <span className="text-[#4b5563] text-xs">{t.email}</span>}
@@ -215,6 +238,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
             {!showEscalationBanner && (
               <TenantDetailActions tenant={tenantForActions} />
             )}
+            <SituationIntakeButton tenantId={t.id} tenantName={t.name} />
             <HardshipButton tenantId={t.id} tenantName={t.name} />
             <TenantAIChat tenantId={t.id} tenantName={t.name} />
           </div>
@@ -226,7 +250,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
             <span className={`w-2 h-2 rounded-full ${tierCfg.dot}`} />
             {tierCfg.label}
           </div>
-          <TenantStatusPicker tenantId={t.id} initialStatus={(t as any).resolution_status ?? null} />
+          <TenantStatusPicker tenantId={t.id} initialStatus={tenant.resolution_status ?? null} />
         </div>
 
         {/* Risk reasons */}
@@ -256,6 +280,16 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
           </div>
         )}
       </div>
+
+      <DecisionMathPanel
+        balanceDue={t.balance_due ?? 0}
+        rentAmount={t.rent_amount ?? 0}
+        rentDueDay={t.rent_due_day ?? 1}
+        leaseGraceDays={0}
+        risk={risk}
+        economics={econ}
+        state={pmState}
+      />
 
       {/* Quick actions panel */}
       <TenantActionsPanel tenant={tenantForActions} />
@@ -386,24 +420,63 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
             </div>
           </div>
 
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between gap-3 mb-3">
             <h2 className="text-white font-semibold text-sm">Cost Breakdown</h2>
+            <div className="flex items-center gap-2">
             <span className="text-[#4b5563] text-xs">
               {pmState ? `${pmState} · ~${econ.uncontested.lostRentWeeks}wk uncontested` : "No state set — using national averages"}
             </span>
+            <CalculationExplainer
+              compact
+              sections={[
+                {
+                  title: "Ledger inputs",
+                  body: "Current balance and monthly rent are pulled from the tenant ledger/import. Every estimate depends on those inputs being current.",
+                  items: [
+                    `Balance due: $${(t.balance_due ?? 0).toLocaleString()}`,
+                    `Monthly rent: $${(t.rent_amount ?? 0).toLocaleString()}`,
+                  ],
+                },
+                {
+                  title: "Court path estimate",
+                  body: "This is a range, not an invoice. It combines rent at risk, local-cost assumptions, contested-risk weighting, turnover, and damage expected value.",
+                  items: [
+                    `Range: ${moneyRange(econ.blendedEvictionRange.low, econ.blendedEvictionRange.high)}`,
+                    `Modeled midpoint: $${econ.blendedEviction.toLocaleString()}`,
+                    `Contested case model: $${econ.contested.total.toLocaleString()}`,
+                  ],
+                },
+                {
+                  title: "Cash for Keys estimate",
+                  body: "This range assumes a negotiated voluntary move-out. The amount actually offered should be reviewed against local rules and the tenant situation.",
+                  items: [
+                    `Range: ${moneyRange(econ.cfk.low, econ.cfk.high)}`,
+                    `Offer midpoint: $${econ.cfk.offerAmount.toLocaleString()}`,
+                    `Max offer before midpoint economics break even: $${econ.breakEvenOffer.toLocaleString()}`,
+                  ],
+                },
+                {
+                  title: "Verification checklist",
+                  body: "These are the fields most likely to move the result.",
+                  items: ["County filing/service fees", "Attorney quote", "Sheriff or marshal fee", "Expected court timeline", "Turnover and make-ready history"],
+                },
+              ]}
+              note="If the savings range crosses zero, treat the recommendation as a close call and verify local costs before relying on it."
+            />
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
             {/* Eviction column */}
             <div className="bg-red-500/5 border border-red-500/15 rounded-xl p-4">
-              <div className="text-[#4b5563] text-xs uppercase tracking-wide mb-2">Eviction (court)</div>
-              <div className="text-red-400 text-2xl font-bold mb-3">~${econ.blendedEviction.toLocaleString()}</div>
+              <div className="text-[#4b5563] text-xs uppercase tracking-wide mb-2">Court path estimate</div>
+              <div className="text-red-400 text-2xl font-bold mb-3">{moneyRange(econ.blendedEvictionRange.low, econ.blendedEvictionRange.high)}</div>
               <div className="space-y-1.5 text-xs">
                 {[
-                  { label: "Court filing + service", val: econ.uncontested.courtFee },
-                  { label: "Attorney fees (uncontested)", val: econ.uncontested.attorneyFee },
-                  { label: "Sheriff / lockout fee", val: econ.uncontested.lockoutFee },
-                  { label: `Lost rent (${econ.uncontested.lostRentWeeks} wks in court)`, val: econ.uncontested.lostRent },
+                  { label: "Court filing + service assumption", val: econ.uncontested.courtFee },
+                  { label: "Attorney fee assumption", val: econ.uncontested.attorneyFee },
+                  { label: "Sheriff / lockout assumption", val: econ.uncontested.lockoutFee },
+                  { label: `Rent at risk (${econ.uncontested.lostRentWeeks} wks in court)`, val: econ.uncontested.lostRent },
                   { label: `Turnover after eviction (~${econ.uncontested.turnoverWeeks} wks)`, val: econ.uncontested.turnoverCost },
                   { label: "Damage risk (expected value)", val: econ.uncontested.damagePremium },
                 ].map(({ label, val }) => (
@@ -425,12 +498,12 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
 
             {/* CFK column */}
             <div className="bg-emerald-500/5 border border-emerald-500/15 rounded-xl p-4">
-              <div className="text-[#4b5563] text-xs uppercase tracking-wide mb-2">Cash for Keys</div>
-              <div className="text-emerald-400 text-2xl font-bold mb-3">~${econ.cfk.total.toLocaleString()}</div>
+              <div className="text-[#4b5563] text-xs uppercase tracking-wide mb-2">Cash for Keys estimate</div>
+              <div className="text-emerald-400 text-2xl font-bold mb-3">{moneyRange(econ.cfk.low, econ.cfk.high)}</div>
               <div className="space-y-1.5 text-xs">
                 {[
-                  { label: "Cash offer to tenant", val: econ.cfk.offerAmount },
-                  { label: `Lost rent while vacating (~${econ.cfk.vacateWeeks} wks)`, val: econ.cfk.vacateRentLoss },
+                  { label: "Cash offer midpoint", val: econ.cfk.offerAmount },
+                  { label: `Rent at risk while vacating (~${econ.cfk.vacateWeeks} wks)`, val: econ.cfk.vacateRentLoss },
                   { label: `Standard turnover (~${econ.cfk.turnoverWeeks} wks)`, val: econ.cfk.turnoverCost },
                   { label: "Damage risk", val: 0, note: "Near zero — tenant motivated to leave clean" },
                 ].map(({ label, val, note }) => (
@@ -474,14 +547,28 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
             </div>
           )}
 
-          <p className="text-[#374151] text-xs">
-            Estimates based on {pmState ?? "national"} averages. Attorney fees and timelines vary. RentSentry never auto-sends legal notices — you review every action.
-          </p>
+          <div className="flex items-center justify-between mt-2">
+            <p className="text-[#374151] text-xs">
+              Estimates based on {pmState ?? "national"} averages. Attorney fees and timelines vary. RentSentry never auto-sends legal notices — you review every action.
+            </p>
+            <GeneratePayOrQuitNotice
+              tenantName={t.name}
+              unit={t.unit}
+              propertyName={property?.name ?? null}
+              propertyAddress={(property as TenantProperty)?.address ?? null}
+              propertyState={pmState}
+              balanceDue={t.balance_due ?? 0}
+              rentAmount={t.rent_amount ?? 0}
+              lateFee={risk.late_fee}
+              pmDisplayName={(profile as Record<string, unknown>)?.pm_display_name as string ?? null}
+              pmPhone={(profile as Record<string, unknown>)?.pm_phone as string ?? null}
+            />
+          </div>
         </div>
       )}
 
       {/* Notes */}
-      <TenantNotes tenantId={t.id} initialNotes={(t as any).notes ?? null} />
+      <TenantNotes tenantId={t.id} initialNotes={tenant.notes ?? null} />
 
       {/* Activity log */}
       <div className="bg-[#111827] border border-white/10 rounded-2xl p-5">

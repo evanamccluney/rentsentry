@@ -18,6 +18,24 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { normalizePhone } from "@/lib/phone"
 
+function calcDaysPastDue(lastPaymentDate: string | null, rentDueDay = 1): number {
+  if (!lastPaymentDate) return 0
+  const last = new Date(lastPaymentDate)
+  const now = new Date()
+  const dueDay = Math.min(Math.max(rentDueDay, 1), 28)
+  let due = new Date(now.getFullYear(), now.getMonth(), dueDay)
+  if (due > now) due = new Date(now.getFullYear(), now.getMonth() - 1, dueDay)
+  return last < due ? Math.floor((now.getTime() - due.getTime()) / (1000 * 60 * 60 * 24)) : 0
+}
+
+function nextStepLabel(days: number): string {
+  if (days >= 30) return "contact your attorney"
+  if (days >= 20) return "serve Pay or Quit notice"
+  if (days >= 10) return "review CFK vs eviction"
+  if (days >= 5)  return "offer a payment plan"
+  return "send a reminder"
+}
+
 function twiml(message: string): NextResponse {
   return new NextResponse(
     `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${message}</Message></Response>`,
@@ -100,13 +118,32 @@ export async function POST(req: NextRequest) {
   const parsed = parsePaidCodes(body, tenantList.length)
 
   if (parsed === "none") {
-    // Mark confirmation as resolved with no payments
-    await supabase
-      .from("interventions")
+    await supabase.from("interventions")
       .update({ status: "resolved", notes: "PM replied: none paid" })
       .eq("id", confirmation.id)
 
-    return twiml("Got it — no payments recorded. RentSentry will send reminders as scheduled.")
+    // Fetch days past due for each tenant to give next step context
+    const tenantIds = tenantList.map(t => t.tenant_id)
+    const { data: tenantData } = await supabase
+      .from("tenants")
+      .select("id, last_payment_date, rent_due_day")
+      .in("id", tenantIds)
+
+    const dataById = Object.fromEntries((tenantData ?? []).map(t => [t.id, t]))
+
+    const steps = tenantList.map(t => {
+      const td = dataById[t.tenant_id]
+      const days = td ? calcDaysPastDue(td.last_payment_date, td.rent_due_day) : 0
+      return { name: t.name.split(" ")[0], days, step: nextStepLabel(days) }
+    })
+
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? ""
+    if (steps.length === 1) {
+      const s = steps[0]
+      return twiml(`Got it — ${s.name} hasn't paid (day ${s.days}). Next: ${s.step}. ${appUrl}/dashboard/tenants`)
+    }
+    const summary = steps.map(s => `${s.name} day ${s.days}: ${s.step}`).join(" | ")
+    return twiml(`Got it — none paid. ${summary}. ${appUrl}/dashboard/tenants`)
   }
 
   const paidTenants = parsed === "all"
@@ -170,7 +207,28 @@ export async function POST(req: NextRequest) {
 
   if (names.length === 0) return twiml("Something went wrong updating records. Please log into RentSentry.")
 
-  const nameList = names.join(", ")
-  const plural = names.length > 1
-  return twiml(`Got it! ${nameList} ${plural ? "have" : "has"} been marked as paid. No SMS ${plural ? "reminders" : "reminder"} will be sent to ${plural ? "them" : "them"} today.`)
+  const unpaidTenants = tenantList.filter(t => !paidTenants.find(p => p.tenant_id === t.tenant_id))
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? ""
+
+  if (unpaidTenants.length === 0) {
+    const nameList = names.join(", ")
+    const plural = names.length > 1
+    return twiml(`Got it! ${nameList} ${plural ? "have" : "has"} been marked as paid. No reminders will fire today.`)
+  }
+
+  // Fetch days past due for unpaid tenants
+  const { data: unpaidData } = await supabase
+    .from("tenants")
+    .select("id, last_payment_date, rent_due_day")
+    .in("id", unpaidTenants.map(t => t.tenant_id))
+
+  const unpaidById = Object.fromEntries((unpaidData ?? []).map(t => [t.id, t]))
+  const unpaidSteps = unpaidTenants.map(t => {
+    const td = unpaidById[t.tenant_id]
+    const days = td ? calcDaysPastDue(td.last_payment_date, td.rent_due_day) : 0
+    return `${t.name.split(" ")[0]} day ${days}: ${nextStepLabel(days)}`
+  }).join(" | ")
+
+  const paidList = names.join(", ")
+  return twiml(`${paidList} marked paid. Still unpaid — ${unpaidSteps}. ${appUrl}/dashboard/tenants`)
 }

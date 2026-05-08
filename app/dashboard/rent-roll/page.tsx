@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server"
 import { scoreTenant } from "@/lib/risk-engine"
+import { profileToEscalationRules } from "@/lib/escalation-rules"
 import Link from "next/link"
 import { TrendingUp, DollarSign, CheckCircle2, AlertTriangle } from "lucide-react"
 
@@ -14,7 +15,8 @@ export default async function RentRollPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  const { data: rawTenants } = await supabase
+  const [{ data: rawTenants }, { data: profile }] = await Promise.all([
+    supabase
     .from("tenants")
     .select(`
       id, name, unit, rent_amount, balance_due,
@@ -23,7 +25,13 @@ export default async function RentRollPage() {
       properties(name)
     `)
     .eq("user_id", user!.id)
-    .eq("status", "active")
+    .eq("status", "active"),
+    supabase
+      .from("profiles")
+      .select("escalation_preset, reminder_day, payment_plan_day, pay_or_quit_day, cfk_review_day, attorney_review_day, repeat_offender_accelerator_days, pre_due_risk_outreach_enabled, pre_due_risk_review_days_before_due, require_attorney_before_notice, payment_plan_before_notice, custom_escalation_notes")
+      .eq("id", user!.id)
+      .single(),
+  ])
 
   const sixMonthsAgo = new Date()
   sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6)
@@ -39,6 +47,7 @@ export default async function RentRollPage() {
   const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0]
   const payments = rawPayments || []
   const tenants = rawTenants || []
+  const escalationRules = profileToEscalationRules(profile)
 
   const thisMonthPayments = payments.filter(p => p.date >= thisMonthStart)
   const collectedThisMonth = thisMonthPayments.reduce((s, p) => s + (p.amount || 0), 0)
@@ -81,6 +90,7 @@ export default async function RentRollPage() {
         rent_amount: t.rent_amount ?? 0,
         last_payment_date: t.last_payment_date ?? undefined,
         rent_due_day: t.rent_due_day ?? 1,
+        escalation_rules: escalationRules,
       }).tier,
     }))
     .sort((a, b) => (b.balance_due ?? 0) - (a.balance_due ?? 0))
@@ -250,7 +260,7 @@ export default async function RentRollPage() {
             </div>
             <div className="px-5 py-3 border-t border-white/[0.04]">
               <p className="text-[#2e3a50] text-xs">
-                "Paid this month" reflects payments logged via the AI chat or tenant detail pages. It does not auto-sync with your payment processor.
+                &quot;Paid this month&quot; reflects payments logged via the AI chat or tenant detail pages. It does not auto-sync with your payment processor.
               </p>
             </div>
           </>

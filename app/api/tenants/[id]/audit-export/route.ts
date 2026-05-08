@@ -18,6 +18,8 @@ const INTERVENTION_LABELS: Record<string, string> = {
   manual_note:                 "Note Added",
   pm_confirmation_sent:        "PM Confirmation Sent",
   pm_payment_confirmed:        "PM Confirmed Payment",
+  situation_intake:            "Situation Intake",
+  resolution_outcome:          "Resolution Outcome",
 }
 
 function escapeCSV(val: string | number | boolean | null | undefined): string {

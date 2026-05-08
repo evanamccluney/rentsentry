@@ -399,49 +399,46 @@ export default function HomePage() {
         <div className="max-w-4xl mx-auto">
           <div className="text-center mb-12">
             <h2 className="text-3xl font-bold mb-3">Simple pricing</h2>
-            <p className="text-[#9ca3af]">One month of unpaid rent costs more than a year of RentSentry.</p>
+            <p className="text-[#9ca3af]">One prevented eviction pays for 6 years of RentSentry. Works alongside whatever software you already use.</p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {[
-              { units: "1–5 units", price: "$25", popular: false },
-              { units: "6–15 units", price: "$49", popular: true },
-              { units: "16–30 units", price: "$79", popular: false },
-              { units: "30+ units", price: "$129", popular: false },
-            ].map(tier => (
-              <div
-                key={tier.units}
-                className={`rounded-2xl p-5 border relative ${
-                  tier.popular
-                    ? "bg-blue-500/10 border-blue-500/30"
-                    : "bg-[#111827] border-white/[0.08]"
-                }`}
-              >
-                {tier.popular && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-blue-500 text-white text-xs font-semibold px-3 py-1 rounded-full">
-                    Most Popular
-                  </div>
-                )}
-                <div className="text-[#6b7280] text-sm mb-2">{tier.units}</div>
-                <div className="text-3xl font-bold text-white mb-1">{tier.price}</div>
-                <div className="text-[#4b5563] text-xs mb-4">per month</div>
-                <Link
-                  href="/signup"
-                  className={`block text-center text-sm font-semibold py-2 rounded-xl transition-colors ${
-                    tier.popular
-                      ? "bg-blue-500 hover:bg-blue-600 text-white"
-                      : "bg-white/5 hover:bg-white/10 text-white border border-white/10"
-                  }`}
-                >
-                  Start Free
-                </Link>
+          <div className="max-w-sm mx-auto">
+            <div className="rounded-2xl p-8 border bg-blue-500/10 border-blue-500/30 relative">
+              <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-blue-500 text-white text-xs font-semibold px-3 py-1 rounded-full">
+                Flat rate · no surprises
               </div>
-            ))}
+              <div className="text-center mb-6">
+                <div className="text-5xl font-bold text-white mb-1">$29</div>
+                <div className="text-[#6b7280] text-sm">per month · unlimited tenants</div>
+              </div>
+              <div className="space-y-3 mb-6">
+                {[
+                  "Automatic payment detection via bank feed",
+                  "7-tier risk scoring engine",
+                  "Structured escalation workflow",
+                  "Pay or Quit notice generator",
+                  "Attorney handoff emails",
+                  "SMS confirmation loop",
+                  "Unlimited properties & tenants",
+                ].map(f => (
+                  <div key={f} className="flex items-center gap-2.5 text-sm text-[#d1d5db]">
+                    <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
+                    {f}
+                  </div>
+                ))}
+              </div>
+              <Link
+                href="/signup"
+                className="block text-center text-sm font-semibold py-2.5 rounded-xl transition-colors bg-blue-500 hover:bg-blue-600 text-white"
+              >
+                Start Free — 30 days free
+              </Link>
+            </div>
           </div>
 
           <div className="mt-6 flex flex-wrap justify-center gap-x-8 gap-y-3">
             {[
-              "Free for 3 months",
+              "30-day free trial",
               "All features included",
               "No credit card required",
               "Cancel anytime",

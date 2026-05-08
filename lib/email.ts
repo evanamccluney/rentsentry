@@ -55,6 +55,94 @@ export const EMAIL_TEMPLATES: Record<string, (name: string) => { subject: string
     subject: "Urgent Notice: Legal Proceedings Being Prepared",
     text: `Hi ${name},\n\nYour account is significantly overdue and legal proceedings are being prepared. Please contact your property manager immediately to resolve this before further action is taken.`,
   }),
+  overdue_warning: (name) => ({
+    subject: "Important: Your Rent Account Is Past Due",
+    text: `Hi ${name},\n\nYour rent account is past due. Please contact your property manager immediately to resolve your balance and avoid further action, including formal notice and legal proceedings.`,
+  }),
+}
+
+export async function sendAttorneyHandoff(opts: {
+  attorneyEmail: string
+  attorneyName: string | null
+  pmName: string | null
+  pmEmail: string
+  tenantName: string
+  unit: string
+  propertyName: string | null
+  propertyAddress: string | null
+  propertyState: string | null
+  balanceDue: number
+  rentAmount: number
+  daysPastDue: number
+  latePaymentCount: number
+  daysLateAvg: number
+  previousDelinquency: boolean
+  interventionSummary: string
+}): Promise<{ ok: boolean; error?: string }> {
+  const greeting = opts.attorneyName ? `Dear ${opts.attorneyName},` : "Dear Attorney,"
+  const location = [opts.propertyAddress ?? opts.propertyName, opts.propertyState].filter(Boolean).join(", ")
+  const monthsOwed = opts.rentAmount > 0 ? (opts.balanceDue / opts.rentAmount).toFixed(1) : "?"
+
+  const body = `
+    <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:32px;background:#fff;color:#1a1a1a;">
+      <p style="font-size:12px;color:#888;margin:0 0 20px;">Sent via RentSentry — ${new Date().toLocaleDateString("en-US", { month:"long", day:"numeric", year:"numeric" })}</p>
+      <h2 style="font-size:18px;margin:0 0 4px;">Nonpayment Matter: ${opts.tenantName}</h2>
+      <p style="font-size:13px;color:#555;margin:0 0 24px;">Unit ${opts.unit}${location ? ` · ${location}` : ""}</p>
+
+      <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:24px;">
+        <tr style="background:#f8f8f8;">
+          <td style="padding:8px 12px;border:1px solid #e5e5e5;font-weight:600;">Property</td>
+          <td style="padding:8px 12px;border:1px solid #e5e5e5;">${location || "—"}</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 12px;border:1px solid #e5e5e5;font-weight:600;">Tenant</td>
+          <td style="padding:8px 12px;border:1px solid #e5e5e5;">${opts.tenantName}, Unit ${opts.unit}</td>
+        </tr>
+        <tr style="background:#f8f8f8;">
+          <td style="padding:8px 12px;border:1px solid #e5e5e5;font-weight:600;">Days Past Due</td>
+          <td style="padding:8px 12px;border:1px solid #e5e5e5;color:#dc2626;font-weight:700;">${opts.daysPastDue} days</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 12px;border:1px solid #e5e5e5;font-weight:600;">Balance Owed</td>
+          <td style="padding:8px 12px;border:1px solid #e5e5e5;color:#dc2626;font-weight:700;">$${opts.balanceDue.toLocaleString()} (${monthsOwed} months)</td>
+        </tr>
+        <tr style="background:#f8f8f8;">
+          <td style="padding:8px 12px;border:1px solid #e5e5e5;font-weight:600;">Monthly Rent</td>
+          <td style="padding:8px 12px;border:1px solid #e5e5e5;">$${opts.rentAmount.toLocaleString()}</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 12px;border:1px solid #e5e5e5;font-weight:600;">Late Payment History</td>
+          <td style="padding:8px 12px;border:1px solid #e5e5e5;">${opts.latePaymentCount} late payment${opts.latePaymentCount !== 1 ? "s" : ""}, avg ${opts.daysLateAvg} days late${opts.previousDelinquency ? " · prior delinquency on record" : ""}</td>
+        </tr>
+      </table>
+
+      <h3 style="font-size:14px;margin:0 0 10px;">Intervention Timeline</h3>
+      <div style="background:#f8f8f8;border:1px solid #e5e5e5;border-radius:6px;padding:12px 16px;font-size:12px;color:#444;white-space:pre-line;margin-bottom:24px;">${opts.interventionSummary || "No prior interventions recorded."}</div>
+
+      <p style="font-size:13px;color:#333;margin:0 0 8px;">
+        We are seeking your advice regarding our options for recovering possession of the above-described premises and all amounts owed. Please let us know what additional documentation you require and your availability to discuss next steps.
+      </p>
+      <p style="font-size:13px;color:#333;margin:0 0 24px;">
+        A full ledger and intervention audit log are available on request.
+      </p>
+
+      <p style="font-size:13px;">Respectfully,<br/><strong>${opts.pmName || "Property Manager"}</strong><br/><span style="color:#666;">${opts.pmEmail}</span></p>
+
+      <p style="font-size:11px;color:#aaa;margin-top:24px;padding-top:16px;border-top:1px solid #e5e5e5;">Prepared with RentSentry. This email does not constitute legal advice.</p>
+    </div>`
+
+  try {
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: opts.attorneyEmail,
+      replyTo: opts.pmEmail,
+      subject: `Nonpayment Matter: ${opts.tenantName} — Unit ${opts.unit}${opts.propertyState ? ` (${opts.propertyState})` : ""}`,
+      html: body,
+    })
+    return { ok: true }
+  } catch (err: unknown) {
+    return { ok: false, error: (err as Error)?.message ?? "Unknown error" }
+  }
 }
 
 export async function sendTenantEmail(

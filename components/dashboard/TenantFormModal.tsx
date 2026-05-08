@@ -138,9 +138,11 @@ export default function TenantFormModal({ mode, properties, initial, onClose }: 
             {/* Lease */}
             <div>
               <p className="text-[#4b5563] text-xs uppercase tracking-wide mb-3">Lease</p>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Lease Start" value={form.lease_start} onChange={v => set("lease_start", v)} type="date" />
-                <Field label="Lease End" value={form.lease_end} onChange={v => set("lease_end", v)} type="date" />
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Lease Start" value={form.lease_start} onChange={v => set("lease_start", v)} type="date" />
+                  <Field label="Lease End" value={form.lease_end} onChange={v => set("lease_end", v)} type="date" />
+                </div>
               </div>
             </div>
 

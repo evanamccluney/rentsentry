@@ -36,7 +36,7 @@ export default function AdminUserCard({
   const [customDays, setCustomDays] = useState("7")
 
   const statusLabel =
-    user.status === "paid"    ? "Paying $49/mo" :
+    user.status === "paid"    ? "Paying $29/mo" :
     user.status === "revoked" ? "Revoked" :
     user.status === "expired" ? "Expired" :
     `${user.trial.daysLeft}d left`

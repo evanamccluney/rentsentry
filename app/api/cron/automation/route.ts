@@ -6,9 +6,9 @@
  *
  * Rules (evaluated in priority order, each deduplicated independently):
  *
- *   Rule A — 5-day proactive reminder
+ *   Rule A — configurable proactive reminder
  *     Trigger: watch or reminder tier + late history (≥2 late payments OR avg ≥3 days)
- *             + within 5 days of rent due date
+ *             + within the user's pre-due risk review window
  *     Type: proactive_reminder
  *     Dedup: skip if sent within 14 days
  *     Research: Day -3 reminder converts 25-30% of would-be late payers to on-time.
@@ -51,6 +51,7 @@ import { createClient } from "@supabase/supabase-js"
 import twilio from "twilio"
 import { scoreTenant } from "@/lib/risk-engine"
 import { sendTenantEmail } from "@/lib/email"
+import { profileToEscalationRules, type EscalationRules } from "@/lib/escalation-rules"
 
 const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
 const FROM_NUMBER = process.env.TWILIO_PHONE_NUMBER!
@@ -177,11 +178,14 @@ export async function GET(req: NextRequest) {
   const userIds = [...new Set(tenants.map((t: { user_id: string }) => t.user_id))]
   const { data: profiles } = await supabase
     .from("profiles")
-    .select("id, auto_mode, pm_phone, pm_alerts_enabled")
+    .select("id, auto_mode, pm_phone, pm_alerts_enabled, escalation_preset, reminder_day, payment_plan_day, pay_or_quit_day, cfk_review_day, attorney_review_day, repeat_offender_accelerator_days, pre_due_risk_outreach_enabled, pre_due_risk_review_days_before_due, require_attorney_before_notice, payment_plan_before_notice, custom_escalation_notes")
     .in("id", userIds)
 
   const autoModeByUser = new Map<string, boolean>(
     (profiles ?? []).map((p: { id: string; auto_mode: boolean | null }) => [p.id, p.auto_mode ?? false])
+  )
+  const rulesByUser = new Map<string, EscalationRules>(
+    (profiles ?? []).map((p: { id: string } & Record<string, unknown>) => [p.id, profileToEscalationRules(p)])
   )
 
   const results = {
@@ -266,6 +270,7 @@ export async function GET(req: NextRequest) {
       rent_amount: t.rent_amount ?? 0,
       last_payment_date: t.last_payment_date ?? undefined,
       rent_due_day: t.rent_due_day ?? 1,
+      escalation_rules: rulesByUser.get(t.user_id),
     })
 
     const snapshot = {
@@ -289,19 +294,23 @@ export async function GET(req: NextRequest) {
     }
 
     const autoMode = autoModeByUser.get(t.user_id) ?? false
+    const rules = rulesByUser.get(t.user_id)
+    const preDueRiskEnabled = rules?.preDueRiskOutreachEnabled ?? true
+    const preDueRiskWindow = rules?.preDueRiskReviewDaysBeforeDue ?? 5
     const hasHistory = (t.late_payment_count ?? 0) >= 2 || (t.days_late_avg ?? 0) >= 3
     const noPaymentMethod = !t.payment_method || t.payment_method === "unknown"
     const hasBalance = (t.balance_due ?? 0) > 0
     const pmConfirmPending = awaitingPmConfirm.has(t.id)
     let triggered = false
 
-    // ── Rule A: 5-day proactive reminder — behavior-based, no payment metadata needed ─
-    // Fires 5 days before rent due date for watch/reminder tenants with late history.
+    // ── Rule A: proactive reminder — behavior-based, no payment metadata needed ─
+    // Fires before rent due date for watch/reminder tenants with late history.
     // Research: chronic-late and at-risk tenants benefit from extra lead time to prepare.
     if (
       (risk.tier === "watch" || risk.tier === "reminder") &&
       hasHistory &&
-      untilDue <= 5
+      preDueRiskEnabled &&
+      untilDue <= preDueRiskWindow
     ) {
       triggered = true
       results.evaluated++
@@ -380,6 +389,7 @@ export async function GET(req: NextRequest) {
     if (
       untilDue <= 1 &&
       ((t.late_payment_count ?? 0) >= 2 || (t.days_late_avg ?? 0) >= 3) &&
+      preDueRiskEnabled &&
       !hasBalance  // delinquent tenants already get Rule D; this targets pre-due risk
     ) {
       triggered = true

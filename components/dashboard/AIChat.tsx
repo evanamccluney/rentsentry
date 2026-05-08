@@ -106,12 +106,12 @@ export default function AIChat() {
       {!open && !onTenantDetailPage && (
         <button
           onClick={() => setOpen(true)}
-          className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 bg-[#60a5fa] hover:bg-[#3b82f6] text-black font-semibold px-4 py-3 rounded-2xl shadow-lg shadow-blue-500/25 transition-all duration-200 hover:scale-105"
+          className="fixed bottom-6 right-6 z-50 flex items-center gap-2 bg-[#131929] hover:bg-[#1a2744] border border-[#1e2d45] hover:border-[#2e4060] text-[#9ca3af] hover:text-white font-medium px-3.5 py-2 rounded-xl shadow-lg shadow-black/30 transition-all duration-200 text-xs"
         >
-          <Sparkles size={16} />
+          <Sparkles size={13} className="text-[#60a5fa]" />
           <span>Ask AI</span>
           {status && status.needs_action > 0 && (
-            <span className="bg-black/20 text-black text-xs font-bold px-1.5 py-0.5 rounded-full">
+            <span className="bg-red-500/20 text-red-400 text-[10px] font-bold px-1.5 py-0.5 rounded-full border border-red-500/20">
               {status.needs_action}
             </span>
           )}

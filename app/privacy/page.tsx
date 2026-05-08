@@ -66,7 +66,8 @@ export default function PrivacyPage() {
 
           <section>
             <h2 className="text-white text-xl font-semibold mb-3">5. SMS Communications</h2>
-            <p>RentSentry sends SMS messages to tenants on behalf of property managers using Twilio's messaging platform. Message frequency varies based on your usage. Standard message and data rates may apply. Tenants can reply STOP to opt out of future messages. By using our SMS features, you agree to comply with applicable telecommunications laws including the TCPA.</p>
+            <p>RentSentry sends SMS messages to tenants and property managers using Twilio's messaging platform. Message frequency varies based on your usage. Standard message and data rates may apply. Recipients can reply STOP to opt out of future messages at any time. By using our SMS features, you agree to comply with applicable telecommunications laws including the TCPA.</p>
+            <p className="mt-3 font-medium text-white">Mobile opt-in data and consent will not be shared with or sold to third parties for marketing purposes or any other purpose.</p>
           </section>
 
           <section>

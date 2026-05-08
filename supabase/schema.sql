@@ -35,11 +35,26 @@ create table if not exists tenants (
   status text default 'active', -- 'active', 'delinquent', 'offboarding', 'vacated'
   balance_due numeric(10,2) default 0,
   rent_due_day integer default 1,      -- day of month rent is due (almost always 1)
+  lease_grace_days integer default 0,  -- lease-specific grace period before late action/fees
+  notice_service_method text,          -- preferred/legal service method for notices
+  local_protection_notes text,         -- local court/tenant-protection notes for AI + audit
   resolution_status text default null, -- 'paid', 'payment_plan', 'eviction_filed', 'vacated', 'collections'
   last_payment_date date,
   utility_billed boolean default false,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
+);
+
+-- Payments log
+create table if not exists payments (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid references tenants(id) on delete cascade not null,
+  user_id uuid references auth.users(id) on delete cascade not null,
+  amount numeric(10,2) not null,
+  date date not null,
+  source text default 'manual', -- 'manual', 'sms_confirm', 'plaid_auto'
+  note text,
+  created_at timestamptz default now()
 );
 
 -- Interventions log
@@ -88,6 +103,25 @@ create table if not exists csv_uploads (
 create table if not exists profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   escalation_style text default 'moderate', -- 'lenient', 'moderate', 'aggressive'
+  escalation_preset text default 'professional',
+  reminder_day integer default 1,
+  payment_plan_day integer default 5,
+  pay_or_quit_day integer default 5,
+  cfk_review_day integer default 21,
+  attorney_review_day integer default 30,
+  pre_due_risk_outreach_enabled boolean default true,
+  pre_due_risk_review_days_before_due integer default 5,
+  repeat_offender_accelerator_days integer default 7,
+  require_attorney_before_notice boolean default true,
+  payment_plan_before_notice boolean default true,
+  custom_escalation_notes text,
+  attorney_name text,
+  attorney_email text,
+  attorney_phone text,
+  plaid_access_token text,
+  plaid_item_id text,
+  plaid_cursor text,
+  plaid_connected_at timestamptz,
   updated_at timestamptz default now()
 );
 

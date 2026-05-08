@@ -4,7 +4,7 @@ import { Pause, Play, Settings, Loader2 } from "lucide-react"
 import Link from "next/link"
 
 export default function AutomationStatusBar() {
-  const [autoMode, setAutoMode] = useState<boolean | null>(null) // null = loading
+  const [autoMode, setAutoMode] = useState<boolean | null>(null)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -33,54 +33,60 @@ export default function AutomationStatusBar() {
   const isOn = autoMode === true
 
   return (
-    <div className={`flex items-center justify-between px-6 py-2 border-b text-xs shrink-0 transition-colors ${
+    <div className={`flex items-center justify-between px-6 py-2.5 border-b text-xs shrink-0 transition-colors ${
       isOn
         ? "bg-[#071a07] border-emerald-900/40"
-        : "bg-[#0d1117] border-white/5"
+        : "bg-[#0d1117] border-white/[0.06]"
     }`}>
-      <div className="flex items-center gap-3">
-        <div className={`flex items-center gap-2 font-semibold ${isOn ? "text-emerald-400" : "text-[#4b5563]"}`}>
+      <div className="flex items-center gap-3 min-w-0">
+        <div className={`flex items-center gap-2 font-medium shrink-0 ${isOn ? "text-emerald-400" : "text-[#4b5563]"}`}>
           {autoMode === null ? (
-            <Loader2 size={11} className="animate-spin text-[#4b5563]" />
+            <Loader2 size={13} className="animate-spin text-[#4b5563]" />
           ) : (
-            <span className={`w-1.5 h-1.5 rounded-full ${isOn ? "bg-emerald-500 animate-pulse" : "bg-[#4b5563]"}`} />
+            <span className={`w-2 h-2 rounded-full shrink-0 ${isOn ? "bg-emerald-500 animate-pulse" : "bg-[#4b5563]"}`} />
           )}
-          {autoMode === null
-            ? "Loading..."
-            : isOn
-              ? "Auto Mode ON — system will act when conditions are met"
-              : "Auto Mode OFF — system evaluates but does not send"}
+          <span className="hidden sm:inline">
+            {autoMode === null
+              ? "Loading..."
+              : isOn
+                ? "Auto Mode ON — system will act when conditions are met"
+                : "Auto Mode OFF — system evaluates but does not send"}
+          </span>
+          <span className="sm:hidden">
+            {autoMode === null ? "Loading..." : isOn ? "Auto Mode ON" : "Auto Mode OFF"}
+          </span>
         </div>
         {isOn && (
-          <span className="text-[#374151] hidden sm:inline">
+          <span className="text-[#374151] hidden lg:inline truncate">
             Behavior-based monitoring · dedup protection · snapshots saved
           </span>
         )}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3 shrink-0 ml-4">
         <button
           onClick={toggleAutoMode}
           disabled={autoMode === null || saving}
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium transition-colors text-xs disabled:opacity-40 ${
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium transition-colors text-xs disabled:opacity-50 disabled:cursor-not-allowed ${
             isOn
               ? "bg-white/5 text-[#6b7280] hover:text-white hover:bg-white/10 border border-white/10"
               : "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20"
           }`}
         >
           {saving ? (
-            <Loader2 size={10} className="animate-spin" />
+            <Loader2 size={12} className="animate-spin" />
           ) : isOn ? (
-            <><Pause size={10} /> Pause</>
+            <><Pause size={12} /> Pause</>
           ) : (
-            <><Play size={10} /> Enable</>
+            <><Play size={12} /> Enable</>
           )}
         </button>
         <Link
           href="/dashboard/settings"
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium bg-white/5 text-[#6b7280] hover:text-white hover:bg-white/10 border border-white/10 transition-colors text-xs"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium bg-white/5 text-[#6b7280] hover:text-white hover:bg-white/10 border border-white/10 transition-colors text-xs"
         >
-          <Settings size={10} /> Manage Rules
+          <Settings size={12} />
+          <span className="hidden sm:inline">Manage Rules</span>
         </Link>
       </div>
     </div>

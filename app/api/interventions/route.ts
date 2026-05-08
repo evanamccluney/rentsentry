@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  revalidateTag(`tenant-data-${user.id}`, 'max')
+  revalidateTag(`tenant-data-${user.id}`)
 
   return NextResponse.json({ ok: true, message: ACTION_LABELS[type] || "Action logged." })
 }

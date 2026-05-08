@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
             name: "RentSentry — Revenue Protection",
             description: "Unlimited tenants · Automated reminders · Risk scoring · Escalation support",
           },
-          unit_amount: 4900, // $49.00/month
+          unit_amount: 2900, // $29.00/month
           recurring: { interval: "month" },
         },
         quantity: 1,

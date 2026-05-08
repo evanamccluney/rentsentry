@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { scoreTenant } from "@/lib/risk-engine"
+import { profileToEscalationRules } from "@/lib/escalation-rules"
 
 function formatDate(date: Date): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" })
@@ -80,7 +81,11 @@ export async function GET() {
       .select("id, name, unit, rent_amount, balance_due, days_late_avg, late_payment_count, previous_delinquency, card_expiry, payment_method, last_payment_date")
       .eq("user_id", user.id)
       .eq("status", "active"),
-    supabase.from("profiles").select("auto_mode").eq("id", user.id).single(),
+    supabase
+      .from("profiles")
+      .select("auto_mode, escalation_preset, reminder_day, payment_plan_day, pay_or_quit_day, cfk_review_day, attorney_review_day, repeat_offender_accelerator_days, pre_due_risk_outreach_enabled, pre_due_risk_review_days_before_due, require_attorney_before_notice, payment_plan_before_notice, custom_escalation_notes")
+      .eq("id", user.id)
+      .single(),
     supabase
       .from("interventions")
       .select("id, tenant_id")
@@ -90,6 +95,7 @@ export async function GET() {
 
   const tenants = tenantsRes.data ?? []
   const autoMode: boolean = profileRes.data?.auto_mode ?? false
+  const escalationRules = profileToEscalationRules(profileRes.data)
 
   const scored = tenants.map(t => ({
     ...t,
@@ -102,6 +108,7 @@ export async function GET() {
       balance_due: t.balance_due ?? 0,
       rent_amount: t.rent_amount ?? 0,
       last_payment_date: t.last_payment_date ?? undefined,
+      escalation_rules: escalationRules,
     }),
   }))
 

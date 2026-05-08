@@ -45,18 +45,18 @@ export const getCachedProperties = (userId: string) =>
   )()
 
 export const getCachedProfile = (userId: string) =>
-  unstable_cache(
-    async () => {
-      const { data } = await service()
-        .from("profiles")
-        .select("onboarded, auto_mode")
-        .eq("id", userId)
-        .single()
-      return data
-    },
-    [`profile-${userId}`],
-    { tags: [`user-meta-${userId}`], revalidate: 300 }
-  )()
+  service()
+    .from("profiles")
+    .select(`
+      onboarded, auto_mode,
+      escalation_preset, reminder_day, payment_plan_day, pay_or_quit_day,
+      cfk_review_day, attorney_review_day, repeat_offender_accelerator_days,
+      pre_due_risk_outreach_enabled, pre_due_risk_review_days_before_due,
+      require_attorney_before_notice, payment_plan_before_notice, custom_escalation_notes
+    `)
+    .eq("id", userId)
+    .single()
+    .then(({ data }) => data)
 
 export const getCachedSubscription = (userId: string) =>
   unstable_cache(

@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  revalidateTag(`tenant-data-${user.id}`, 'max')
+  revalidateTag(`tenant-data-${user.id}`)
 
   return NextResponse.json({ ok: true, imported: inserts.length })
 }

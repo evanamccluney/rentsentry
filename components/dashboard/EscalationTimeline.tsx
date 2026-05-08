@@ -31,7 +31,7 @@ const STAGES: {
     ring: "ring-blue-400",
     textColor: "text-blue-400",
     dayMarker: "Pre-1st",
-    trigger: "No balance — but 2+ late payments, avg 3+ days late, no payment method, or card expiring. Proactive alert 5 days before due, urgent alert 1 day before due.",
+    trigger: "No balance, but 2+ late payments, avg 3+ days late, no payment method, or card expiring.",
     action: "Send proactive reminder or confirm payment method",
   },
   {
@@ -40,9 +40,9 @@ const STAGES: {
     dot: "bg-yellow-400",
     ring: "ring-yellow-400",
     textColor: "text-yellow-400",
-    dayMarker: "Day 1–14",
-    trigger: "Balance outstanding. First or second offense, or partial payment received. No significant history.",
-    action: "Send friendly reminder or hardship check-in (sudden non-payers)",
+    dayMarker: "Day 1-4",
+    trigger: "Balance outstanding. First or second offense, partial payment, or no significant history.",
+    action: "Send friendly reminder or hardship check-in",
   },
   {
     tier: "payment_plan",
@@ -50,9 +50,9 @@ const STAGES: {
     dot: "bg-amber-500",
     ring: "ring-amber-500",
     textColor: "text-amber-400",
-    dayMarker: "Day 15+",
-    trigger: "Balance + 15+ days past due, or full month's rent owed, or chronic late history. Structure repayment before legal escalation.",
-    action: "Offer 2–3 installment payment plan",
+    dayMarker: "Day 5+",
+    trigger: "Balance + 5+ days past due, partial payment, or chronic late history.",
+    action: "Offer 2-3 installment payment plan with firm default trigger",
   },
   {
     tier: "pay_or_quit",
@@ -60,9 +60,9 @@ const STAGES: {
     dot: "bg-red-400",
     ring: "ring-red-400",
     textColor: "text-red-300",
-    dayMarker: "Day 15+",
-    trigger: "1+ month owed + 15 days past due, OR repeat offender + any balance. Starts legal clock without committing to eviction. 80% of tenants pay within 3–7 days of notice.",
-    action: "Issue Pay or Quit notice",
+    dayMarker: "Day 5+",
+    trigger: "1+ month owed + 5 days past due, 1.5+ months owed, or repeat offender + balance.",
+    action: "Review and serve Pay or Quit notice after local/legal verification",
     requiresAttorney: true,
   },
   {
@@ -71,19 +71,19 @@ const STAGES: {
     dot: "bg-orange-500",
     ring: "ring-orange-500",
     textColor: "text-orange-400",
-    dayMarker: "Day 30–45",
-    trigger: "1.5+ months owed + 30 days past due, OR repeat offender with 1.5+ months. Optimal window before court — tenant anxiety is highest, no attorney yet, eviction not on public record.",
-    action: "Offer $500–$1,500 for voluntary move-out within 14 days",
+    dayMarker: "Day 21-30",
+    trigger: "1+ month owed + 21 days past due, or 1.5+ months owed with repeat history.",
+    action: "Compare CFK offer against court path before another full rent cycle is exposed",
   },
   {
     tier: "legal",
-    label: "Start Eviction",
+    label: "Attorney / Filing",
     dot: "bg-red-500",
     ring: "ring-red-500",
     textColor: "text-red-400",
-    dayMarker: "Day 45+",
-    trigger: "2+ months owed + repeat offender OR 45+ days past due. 3+ months owed regardless of days. 1.5+ months + 60 days past due (two full billing cycles ignored).",
-    action: "File for eviction — requires attorney",
+    dayMarker: "Day 30+",
+    trigger: "2+ months owed, 1+ month owed + 30 days past due, or repeat offender + 21 days past due.",
+    action: "Attorney / filing review",
     requiresAttorney: true,
   },
 ]
@@ -129,7 +129,7 @@ export default function EscalationTimeline({ currentTier, daysPastDue, daysUntil
           <div className="text-white font-semibold text-sm">Escalation Path</div>
           <span className="text-[#4b5563] text-xs">{statusLabel}</span>
           {pattern && (
-            <span className={`text-xs font-medium ${pattern.color}`}>· {pattern.label}</span>
+            <span className={`text-xs font-medium ${pattern.color}`}>- {pattern.label}</span>
           )}
         </div>
         <div className="flex items-center gap-1.5 text-[#4b5563]">
@@ -143,11 +143,10 @@ export default function EscalationTimeline({ currentTier, daysPastDue, daysUntil
       {open && (
         <div className="px-5 pb-5 border-t border-white/5">
           <p className="text-[#374151] text-xs py-3 mb-1">
-            Escalation path if rent goes unpaid — current stage highlighted. Triggers are evaluated daily by RentSentry.
+            Escalation path if rent goes unpaid. Current stage is highlighted. RentSentry never auto-sends legal notices.
           </p>
 
           <div className="relative">
-            {/* Vertical connector line */}
             <div className="absolute left-[9px] top-4 bottom-4 w-px bg-[#1e2d45]" />
 
             <div className="space-y-0">
@@ -158,7 +157,6 @@ export default function EscalationTimeline({ currentTier, daysPastDue, daysUntil
 
                 return (
                   <div key={stage.tier} className="relative flex items-start gap-3">
-                    {/* Dot */}
                     <div
                       className={`relative z-10 w-[19px] h-[19px] rounded-full flex items-center justify-center shrink-0 mt-[3px] ${
                         isCurrent
@@ -172,7 +170,6 @@ export default function EscalationTimeline({ currentTier, daysPastDue, daysUntil
                       {isPast && <span className="w-1 h-1 rounded-full bg-[#374151]" />}
                     </div>
 
-                    {/* Content */}
                     <div className={`pb-4 flex-1 min-w-0 ${i === STAGES.length - 1 ? "pb-0" : ""}`}>
                       <div className="flex items-center gap-2 flex-wrap">
                         <span

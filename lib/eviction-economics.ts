@@ -63,6 +63,8 @@ export type EvictionScenario = {
   damagePremium: number  // expected value of excess damage (probability × avg damage cost)
   total: number
   weeksTotal: number
+  low: number
+  high: number
 }
 
 export type CFKScenario = {
@@ -73,6 +75,14 @@ export type CFKScenario = {
   turnoverCost: number
   total: number
   weeksTotal: number
+  low: number
+  high: number
+}
+
+export type CostEstimateSource = {
+  label: string
+  basis: "ledger" | "calendar-proration" | "local-average" | "industry-range" | "model-assumption"
+  note: string
 }
 
 export type EconomicsResult = {
@@ -85,6 +95,18 @@ export type EconomicsResult = {
   recommendationStrength: "strong" | "moderate" | "close"
   reasoning: string[]
   breakEvenOffer: number   // max CFK offer where CFK is still cheaper than blended eviction
+  blendedEvictionRange: { low: number; high: number }
+  cfkSavingsRange: { low: number; high: number }
+  estimateConfidence: "low" | "medium"
+  assumptions: string[]
+  sources: CostEstimateSource[]
+}
+
+function range(value: number, lowFactor: number, highFactor: number) {
+  return {
+    low: Math.max(0, Math.round(value * lowFactor)),
+    high: Math.max(0, Math.round(value * highFactor)),
+  }
 }
 
 export function calculateEconomics(params: {
@@ -115,6 +137,7 @@ export function calculateEconomics(params: {
   const uncontestedLostRent = Math.round(d.weeks * weeklyRent)
   const uncontestedTotal = d.courtFee + d.attorneyFee + d.lockoutFee
     + uncontestedLostRent + evictionTurnoverCost + damagePremium
+  const uncontestedRange = range(uncontestedTotal, 0.78, 1.35)
 
   const uncontested: EvictionScenario = {
     label: "Eviction (uncontested)",
@@ -128,6 +151,7 @@ export function calculateEconomics(params: {
     damagePremium,
     total: uncontestedTotal,
     weeksTotal: d.weeks + evictionTurnoverWeeks,
+    ...uncontestedRange,
   }
 
   // ── Contested eviction ────────────────────────────────────────────────────────
@@ -138,6 +162,7 @@ export function calculateEconomics(params: {
   const contestedDamagePremium = Math.round(damagePremium * 1.6)  // more hostile departure
   const contestedTotal = d.courtFee + contestedAttorney + d.lockoutFee
     + contestedLostRent + evictionTurnoverCost + contestedDamagePremium
+  const contestedRange = range(contestedTotal, 0.80, 1.45)
 
   const contested: EvictionScenario = {
     label: "Eviction (contested)",
@@ -151,12 +176,17 @@ export function calculateEconomics(params: {
     damagePremium: contestedDamagePremium,
     total: contestedTotal,
     weeksTotal: contestedWeeks + evictionTurnoverWeeks,
+    ...contestedRange,
   }
 
   // ── Blended eviction cost (probability-weighted) ──────────────────────────────
   const blendedEviction = Math.round(
     uncontestedTotal + (contestedTotal - uncontestedTotal) * d.contestedRisk
   )
+  const blendedEvictionRange = {
+    low: Math.round(uncontested.low + (contested.low - uncontested.low) * d.contestedRisk),
+    high: Math.round(uncontested.high + (contested.high - uncontested.high) * d.contestedRisk),
+  }
 
   // ── Cash for Keys ─────────────────────────────────────────────────────────────
   // Industry standard offer: 1.0–1.5× monthly rent
@@ -167,6 +197,10 @@ export function calculateEconomics(params: {
   const cfkTurnoverWeeks = 4.0
   const cfkTurnoverCost = Math.round(weeklyRent * cfkTurnoverWeeks)
   const cfkTotal = cfkOffer + cfkVacateRentLoss + cfkTurnoverCost
+  const cfkRange = {
+    low: Math.round((rentAmount * 0.5) + cfkVacateRentLoss + Math.round(cfkTurnoverCost * 0.75)),
+    high: Math.round((rentAmount * 2.0) + Math.round(cfkVacateRentLoss * 1.5) + Math.round(cfkTurnoverCost * 1.4)),
+  }
 
   const cfk: CFKScenario = {
     offerAmount: cfkOffer,
@@ -176,9 +210,14 @@ export function calculateEconomics(params: {
     turnoverCost: cfkTurnoverCost,
     total: cfkTotal,
     weeksTotal: cfkVacateWeeks + cfkTurnoverWeeks,
+    ...cfkRange,
   }
 
   const cfkSavings = blendedEviction - cfkTotal
+  const cfkSavingsRange = {
+    low: blendedEvictionRange.low - cfk.high,
+    high: blendedEvictionRange.high - cfk.low,
+  }
   const breakEvenOffer = Math.round(blendedEviction - cfkVacateRentLoss - cfkTurnoverCost)
 
   // ── Recommendation logic ──────────────────────────────────────────────────────
@@ -214,13 +253,13 @@ export function calculateEconomics(params: {
   // Factor 5: Dollar savings narrative (always add)
   if (recommendation === "cfk") {
     if (savingsPct >= 0.4) {
-      reasoning.push(`CFK saves an estimated $${cfkSavings.toLocaleString()} (${Math.round(savingsPct * 100)}% less than eviction)`)
+      reasoning.push(`CFK modeled midpoint saves $${cfkSavings.toLocaleString()} (${Math.round(savingsPct * 100)}% less than eviction)`)
       recommendationStrength = "strong"
     } else if (savingsPct >= 0.2) {
-      reasoning.push(`CFK saves an estimated $${cfkSavings.toLocaleString()} — meaningful but not overwhelming`)
+      reasoning.push(`CFK modeled midpoint saves $${cfkSavings.toLocaleString()} — meaningful but not overwhelming`)
       recommendationStrength = "moderate"
     } else {
-      reasoning.push(`CFK saves roughly $${cfkSavings.toLocaleString()} — the difference is closer than usual`)
+      reasoning.push(`CFK modeled midpoint saves roughly $${cfkSavings.toLocaleString()} — the difference is closer than usual`)
       recommendationStrength = "close"
     }
   }
@@ -243,11 +282,16 @@ export function calculateEconomics(params: {
   }
 
   // Factor 8: Damage
-  reasoning.push(`Post-eviction damage runs $${damagePremium.toLocaleString()} in expected costs vs near-zero for a cooperative CFK move-out`)
+  reasoning.push(`Post-eviction damage is modeled at $${damagePremium.toLocaleString()} expected value; replace this with local move-out history when available`)
 
   // Factor 9: No prior delinquency
   if (!previousDelinquency && recommendation === "cfk") {
     reasoning.push(`No prior delinquency — first-time situation, tenant more likely to cooperate with CFK`)
+  }
+
+  if (cfkSavingsRange.low <= 0 && cfkSavingsRange.high > 0) {
+    recommendationStrength = "close"
+    reasoning.push("Modeled savings range crosses zero — verify local court fees, attorney fees, lockout fees, and timeline before relying on the midpoint")
   }
 
   return {
@@ -260,5 +304,37 @@ export function calculateEconomics(params: {
     recommendationStrength,
     reasoning,
     breakEvenOffer,
+    blendedEvictionRange,
+    cfkSavingsRange,
+    estimateConfidence: state ? "medium" : "low",
+    assumptions: [
+      "Current balance and monthly rent come from the tenant ledger/import.",
+      "Rent loss is prorated from monthly rent; it is not a separate fee.",
+      "Court fees, attorney fees, lockout fees, timelines, contested risk, turnover, and damage are model assumptions unless configured from local records.",
+      "Court fees can vary by county and may change by statute or clerk schedule.",
+      "Cash-for-Keys is voluntary and should be reviewed against state/local rules before use.",
+    ],
+    sources: [
+      {
+        label: "Tenant ledger/import",
+        basis: "ledger",
+        note: "Balance due and monthly rent are exact only to the quality and date of the imported ledger.",
+      },
+      {
+        label: "Calendar rent proration",
+        basis: "calendar-proration",
+        note: "Daily rent exposure divides monthly rent by the number of days in each calendar month.",
+      },
+      {
+        label: "Local court and attorney assumptions",
+        basis: "local-average",
+        note: "Replace defaults with county clerk fee schedules and attorney quotes for decision-grade local accuracy.",
+      },
+      {
+        label: "Cash-for-Keys assumption",
+        basis: "industry-range",
+        note: "Offer range modeled at 0.5x-2.0x monthly rent; actual enforceability and amount are local/legal questions.",
+      },
+    ],
   }
 }

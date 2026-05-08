@@ -6,6 +6,7 @@ import Link from "next/link"
 import Sidebar from "@/components/dashboard/Sidebar"
 import AIChat from "@/components/dashboard/AIChat"
 import AutomationStatusBar from "@/components/dashboard/AutomationStatusBar"
+import OnboardingPrompt from "@/components/dashboard/OnboardingPrompt"
 import { AlertTriangle, Clock } from "lucide-react"
 
 function trialStatus(createdAt: string, metaEndsAt?: string) {
@@ -26,7 +27,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     getCachedSubscription(user.id),
   ])
 
-  if (!profile?.onboarded) redirect("/onboarding")
+  const isOnboarded = true // onboarding temporarily disabled
 
   const headersList = await headers()
   const pathname = headersList.get("x-pathname") ?? ""
@@ -72,8 +73,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
           </div>
         )}
 
-        <main className="flex-1 overflow-y-auto p-8">
-          {showGate ? (
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+          {!isOnboarded ? (
+            <OnboardingPrompt />
+          ) : showGate ? (
             <div className="flex flex-col items-center justify-center h-full text-center">
               <div className="bg-[#111827] border border-white/10 rounded-2xl p-10 max-w-md">
                 <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center mx-auto mb-5">
@@ -84,7 +87,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
                   Your 30-day free trial expired. Subscribe to keep access to your dashboard, risk scoring, automated reminders, and all your tenant data.
                 </p>
                 <div className="text-[#9ca3af] text-sm mb-6">
-                  <span className="text-white font-bold text-2xl">$49</span>
+                  <span className="text-white font-bold text-2xl">$29</span>
                   <span className="text-[#6b7280]"> / month · cancel anytime</span>
                 </div>
                 <Link

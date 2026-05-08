@@ -1,6 +1,9 @@
 "use client"
 import { useState, useRef, useEffect } from "react"
-import { Sparkles, X, Send } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { ClipboardList, Sparkles, X, Send } from "lucide-react"
+import AIMessageContent from "./AIMessageContent"
+import SituationIntakeModal from "./SituationIntakeModal"
 
 interface Message {
   role: "user" | "assistant"
@@ -13,14 +16,17 @@ interface Props {
 }
 
 const SUGGESTED_PROMPTS = [
-  "How do I write a CFK offer letter?",
-  "What if they refuse the offer?",
-  "What are my legal options?",
-  "How long will this take?",
+  "Tenant promised to pay",
+  "Tenant stopped responding",
+  "Tenant disputed the balance",
+  "Tenant mentioned repair issues",
+  "Help me decide the next step",
 ]
 
 export default function TenantAIChat({ tenantId, tenantName }: Props) {
+  const router = useRouter()
   const [open, setOpen] = useState(false)
+  const [intakeOpen, setIntakeOpen] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
@@ -124,6 +130,19 @@ export default function TenantAIChat({ tenantId, tenantName }: Props) {
           </button>
         </div>
 
+        <div className="px-4 py-3 border-b border-white/8 bg-white/[0.02] shrink-0">
+          <button
+            onClick={() => setIntakeOpen(true)}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-amber-500/20 bg-amber-500/10 text-amber-300 hover:bg-amber-500/15 transition-colors text-xs font-semibold"
+          >
+            <ClipboardList size={13} />
+            Log tenant situation first
+          </button>
+          <p className="mt-2 text-[11px] leading-relaxed text-[#4b5563]">
+            Best when the tenant replied, made an excuse, promised payment, disputed the balance, or mentioned repairs.
+          </p>
+        </div>
+
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3 min-h-0">
           {messages.length === 0 && loading && (
@@ -139,12 +158,12 @@ export default function TenantAIChat({ tenantId, tenantName }: Props) {
 
           {messages.map((m, i) => (
             <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-              <div className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${
+              <div className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
                 m.role === "user"
                   ? "bg-violet-500/25 text-white rounded-tr-sm"
                   : "bg-[#111827] border border-white/[0.07] text-[#d1d5db] rounded-tl-sm"
               }`}>
-                {m.content}
+                {m.role === "assistant" ? <AIMessageContent content={m.content} /> : m.content}
               </div>
             </div>
           ))}
@@ -167,7 +186,7 @@ export default function TenantAIChat({ tenantId, tenantName }: Props) {
         {/* Suggested prompts */}
         {showSuggestions && (
           <div className="px-4 pb-2 shrink-0">
-            <div className="text-[#374151] text-[10px] uppercase tracking-wide mb-2">Quick questions</div>
+            <div className="text-[#374151] text-[10px] uppercase tracking-wide mb-2">Quick situation prompts</div>
             <div className="flex flex-wrap gap-1.5">
               {SUGGESTED_PROMPTS.map(q => (
                 <button
@@ -190,7 +209,7 @@ export default function TenantAIChat({ tenantId, tenantName }: Props) {
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() } }}
-              placeholder="Ask anything about this tenant…"
+              placeholder="Explain what happened or ask what to do next..."
               className="flex-1 bg-[#111827] border border-white/10 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-[#2e3a50] focus:outline-none focus:border-violet-500/40 transition-colors"
               disabled={loading}
             />
@@ -204,6 +223,21 @@ export default function TenantAIChat({ tenantId, tenantName }: Props) {
           </div>
         </div>
       </div>
+
+      {intakeOpen && (
+        <SituationIntakeModal
+          tenantId={tenantId}
+          tenantName={tenantName}
+          onClose={() => setIntakeOpen(false)}
+          onSaved={() => {
+            setIntakeOpen(false)
+            initialized.current = true
+            setMessages([])
+            router.refresh()
+            if (open) loadInitialMessage()
+          }}
+        />
+      )}
     </>
   )
 }

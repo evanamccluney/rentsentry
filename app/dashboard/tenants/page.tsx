@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server"
 import { getCachedTenants, getCachedProperties, getCachedProfile } from "@/lib/cache"
 import TenantBoard from "@/components/dashboard/TenantBoard"
 import { scoreTenant } from "@/lib/risk-engine"
+import { profileToEscalationRules } from "@/lib/escalation-rules"
 
 export default async function TenantsPage() {
   const supabase = await createClient()
@@ -31,6 +32,7 @@ export default async function TenantsPage() {
   const TIER_ORDER: Record<string, number> = {
     legal: 0, pay_or_quit: 1, cash_for_keys: 2, payment_plan: 3, reminder: 4, watch: 5, healthy: 6,
   }
+  const escalationRules = profileToEscalationRules(profile)
 
   const scored = tenants
     .map(t => ({
@@ -45,6 +47,7 @@ export default async function TenantsPage() {
         rent_amount: t.rent_amount ?? 0,
         last_payment_date: t.last_payment_date ?? undefined,
         rent_due_day: t.rent_due_day ?? 1,
+        escalation_rules: escalationRules,
       }),
     }))
     .sort((a, b) => TIER_ORDER[a.tier] - TIER_ORDER[b.tier])
@@ -57,6 +60,7 @@ export default async function TenantsPage() {
       paymentsThisMonth={paymentsThisMonth}
       autoMode={profile?.auto_mode ?? false}
       landlordEmail={user!.email ?? ""}
+      escalationRules={escalationRules}
     />
   )
 }

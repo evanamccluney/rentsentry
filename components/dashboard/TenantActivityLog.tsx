@@ -1,6 +1,6 @@
 "use client"
 import { useState } from "react"
-import { Clock, ChevronDown, ChevronRight, Scale, Zap, Heart, Phone, FileText, MessageSquare } from "lucide-react"
+import { Clock, ChevronDown, ChevronRight, Scale, Zap, Heart, Phone, FileText, MessageSquare, ClipboardList, CheckCircle2 } from "lucide-react"
 
 interface InterventionSnapshot {
   tier: string
@@ -53,6 +53,8 @@ const INTERVENTION_LABELS: Record<string, string> = {
   payment_plan_agreed:         "Payment plan agreed",
   custom_sms:                  "Custom SMS sent",
   manual_note:                 "Note added",
+  situation_intake:            "Situation logged",
+  resolution_outcome:          "Outcome logged",
   // legacy
   card_expiry_alert:           "Card expiry reminder sent",
   card_expiry_30:              "Card expiry reminder sent",
@@ -204,6 +206,8 @@ const USER_ACTION_ICONS: Record<string, { icon: typeof Phone; color: string; bg:
   call_logged:          { icon: Phone,         color: "text-blue-400",    bg: "bg-blue-500/10 border-blue-500/20" },
   payment_plan_agreed:  { icon: FileText,      color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
   custom_sms:           { icon: MessageSquare, color: "text-violet-400",  bg: "bg-violet-500/10 border-violet-500/20" },
+  situation_intake:     { icon: ClipboardList, color: "text-violet-300",  bg: "bg-violet-500/10 border-violet-500/20" },
+  resolution_outcome:   { icon: CheckCircle2,  color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
 }
 
 function ActivityEntry({ entry, isLast }: { entry: Intervention; isLast: boolean }) {
@@ -264,6 +268,11 @@ function ActivityEntry({ entry, isLast }: { entry: Intervention; isLast: boolean
             <span className="text-[#2e3a50]">· snapshot saved</span>
           )}
         </div>
+        {entry.notes && (
+          <div className="mt-2 bg-[#0d1117] border border-white/5 rounded-xl px-3 py-2.5 text-[#9ca3af] text-xs leading-relaxed whitespace-pre-wrap">
+            {entry.notes}
+          </div>
+        )}
         {expanded && entry.snapshot && (
           <SnapshotCard s={entry.snapshot} />
         )}
