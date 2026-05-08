@@ -60,7 +60,7 @@ export default function StripeConnect({
               : "Send tenants a secure payment link when they're late. Money goes directly to your Stripe account. Tenants pay a 0.5% processing fee — you receive the full rent amount."}
           </p>
           <p className="text-[#4b5563] text-[11px] leading-relaxed mt-1">
-            Note: Always ensure tenants have a free alternative (check, money order). Processing fees are prohibited in New York and Missouri — do not use payment links for tenants in those states.
+            Always ensure tenants have a free alternative (check or money order). You are responsible for compliance with your local landlord-tenant laws.
           </p>
         </div>
       </div>

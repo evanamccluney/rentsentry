@@ -62,6 +62,17 @@ export default function TermsPage() {
           </section>
 
           <section>
+            <h2 className="text-white text-xl font-semibold mb-3">5a. Payment Features — Legal Compliance</h2>
+            <p className="mb-3">RentSentry's payment link feature allows landlords to collect rent through a third-party payment processor. A platform fee may be added to the tenant's payment at checkout. By using this feature, you agree that:</p>
+            <ul className="list-disc list-inside space-y-2 text-[#9ca3af]">
+              <li>You are solely responsible for ensuring your use of payment links complies with all applicable federal, state, and local laws, including laws governing rental payment fees and permissible payment methods</li>
+              <li>You will always provide tenants with at least one free payment alternative (such as check or money order) regardless of whether you use RentSentry's payment link feature</li>
+              <li>RentSentry does not verify the jurisdiction of your rental properties and makes no representation that the payment fee feature is permissible in your specific location</li>
+              <li>RentSentry is not liable for any fines, penalties, or claims arising from your use of the payment feature in jurisdictions where such fees are restricted or prohibited</li>
+            </ul>
+          </section>
+
+          <section>
             <h2 className="text-white text-xl font-semibold mb-3">6. SMS Messaging</h2>
             <p className="mb-3"><strong className="text-white">Program:</strong> RentSentry — recurring SMS notifications for rent reminders, payment confirmations, maintenance updates, and lease alerts sent to tenants and property managers.</p>
             <p className="mb-3">Message frequency varies based on your usage and tenant activity. Message and data rates may apply.</p>
