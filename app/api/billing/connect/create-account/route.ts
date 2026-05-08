@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
       controller: {
         stripe_dashboard: { type: "express" },
         fees: { payer: "application" },
-        losses: { payments: "stripe" },
+        losses: { payments: "application" },
         requirement_collection: "stripe",
       },
       capabilities: {
