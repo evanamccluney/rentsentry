@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
           currency: "usd",
           product_data: {
             name: `Rent Payment — Unit ${tenant.unit}`,
-            description: `Payment to ${profile.pm_display_name || "your property manager"} via RentSentry`,
+            description: `Payment to ${profile.pm_display_name || "your property manager"} via RentSentry. You may also pay by check — contact your landlord for details.`,
           },
           unit_amount: amountCents,
         },
@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
   if (tenant.phone && session.url) {
     try {
       await twilio.messages.create({
-        body: `Hi ${tenant.name}, your ${profile.pm_display_name || "property manager"} has sent you a secure payment link for $${amountDollars.toLocaleString()} due on Unit ${tenant.unit}. Pay now: ${session.url} — Reply STOP to opt out.`,
+        body: `Hi ${tenant.name}, your ${profile.pm_display_name || "property manager"} has sent you a secure payment link for $${amountDollars.toLocaleString()} due on Unit ${tenant.unit}. Pay now: ${session.url} You may also pay by check — contact your landlord for details. Reply STOP to opt out.`,
         from: process.env.TWILIO_PHONE_NUMBER!,
         to: tenant.phone,
       })

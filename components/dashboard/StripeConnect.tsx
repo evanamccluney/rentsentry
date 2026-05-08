@@ -56,8 +56,11 @@ export default function StripeConnect({
           </div>
           <p className="text-[#6b7280] text-xs leading-relaxed">
             {connected
-              ? `Connected ${connectedAt ? `since ${new Date(connectedAt).toLocaleDateString()}` : ""}. Send tenants a secure payment link when they're late. A 0.5% platform fee is deducted from collected payments — tenants pay nothing extra.`
-              : "Send tenants a secure payment link when they're late. Money goes directly to your Stripe account. A 0.5% platform fee applies — tenants pay nothing extra."}
+              ? `Connected ${connectedAt ? `since ${new Date(connectedAt).toLocaleDateString()}` : ""}. Send tenants a secure payment link when they're late. Tenants pay a 0.5% processing fee on top of rent — you receive the full rent amount.`
+              : "Send tenants a secure payment link when they're late. Money goes directly to your Stripe account. Tenants pay a 0.5% processing fee — you receive the full rent amount."}
+          </p>
+          <p className="text-[#4b5563] text-[11px] leading-relaxed mt-1">
+            Note: Always ensure tenants have a free alternative (check, money order). Processing fees are prohibited in New York and Missouri — do not use payment links for tenants in those states.
           </p>
         </div>
       </div>
