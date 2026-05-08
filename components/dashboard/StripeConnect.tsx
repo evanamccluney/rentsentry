@@ -11,9 +11,11 @@ export default function StripeConnect({
   connectedAt: string | null
 }) {
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   async function handleConnect() {
     setLoading(true)
+    setError(null)
     try {
       const supabase = createClient()
       const { data: { session } } = await supabase.auth.getSession()
@@ -27,8 +29,12 @@ export default function StripeConnect({
       const data = await res.json()
       if (data.url) {
         window.location.href = data.url
+      } else {
+        setError(data.error || "Something went wrong. Try again.")
+        setLoading(false)
       }
-    } catch {
+    } catch (e) {
+      setError("Network error. Try again.")
       setLoading(false)
     }
   }
@@ -57,14 +63,17 @@ export default function StripeConnect({
       </div>
 
       {!connected && (
-        <button
-          onClick={handleConnect}
-          disabled={loading}
-          className="mt-4 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 transition-colors text-sm font-semibold disabled:opacity-50"
-        >
-          <ExternalLink size={13} />
-          {loading ? "Setting up…" : "Connect Stripe Account"}
-        </button>
+        <>
+          <button
+            onClick={handleConnect}
+            disabled={loading}
+            className="mt-4 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 transition-colors text-sm font-semibold disabled:opacity-50"
+          >
+            <ExternalLink size={13} />
+            {loading ? "Setting up…" : "Connect Stripe Account"}
+          </button>
+          {error && <p className="mt-2 text-red-400 text-xs">{error}</p>}
+        </>
       )}
 
       {connected && (
