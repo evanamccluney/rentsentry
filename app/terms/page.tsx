@@ -63,8 +63,11 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-white text-xl font-semibold mb-3">6. SMS Messaging</h2>
-            <p>By using our SMS features, you agree to:</p>
-            <ul className="list-disc list-inside space-y-2 text-[#9ca3af] mt-3">
+            <p className="mb-3"><strong className="text-white">Program:</strong> RentSentry — recurring SMS notifications for rent reminders, payment confirmations, maintenance updates, and lease alerts sent to tenants and property managers.</p>
+            <p className="mb-3">Message frequency varies based on your usage and tenant activity. Message and data rates may apply.</p>
+            <p className="mb-3">To opt out of messages at any time, reply <strong className="text-white">STOP</strong>. To request help, reply <strong className="text-white">HELP</strong> or contact us at support@rentsentry.com.</p>
+            <p className="mb-3">By using our SMS features, you agree to:</p>
+            <ul className="list-disc list-inside space-y-2 text-[#9ca3af]">
               <li>Only send messages to tenants who have a legitimate tenancy relationship with you</li>
               <li>Comply with all applicable laws including the TCPA, CAN-SPAM Act, and state equivalents</li>
               <li>Honor opt-out requests from tenants promptly</li>
