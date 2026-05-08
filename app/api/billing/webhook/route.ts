@@ -51,5 +51,15 @@ export async function POST(req: NextRequest) {
       .eq("stripe_customer_id", invoice.customer as string)
   }
 
+  if (event.type === "account.updated") {
+    const account = event.data.object as Stripe.Account
+    if (account.charges_enabled && account.details_submitted) {
+      await supabase
+        .from("profiles")
+        .update({ stripe_connect_at: new Date().toISOString() })
+        .eq("stripe_account_id", account.id)
+    }
+  }
+
   return NextResponse.json({ received: true })
 }

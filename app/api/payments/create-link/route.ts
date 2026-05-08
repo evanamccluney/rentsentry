@@ -38,28 +38,30 @@ export async function POST(req: NextRequest) {
   const amountCents = Math.round(amountDollars * 100)
   const feeCents = Math.round(amountCents * FEE_RATE)
 
-  const session = await stripe.checkout.sessions.create(
-    {
-      mode: "payment",
-      payment_method_types: ["card"],
-      line_items: [{
-        price_data: {
-          currency: "usd",
-          product_data: {
-            name: `Rent Payment — Unit ${tenant.unit}`,
-            description: `Payment to ${profile.pm_display_name || "your property manager"} via RentSentry`,
-          },
-          unit_amount: amountCents,
+  // Destination charge — money flows through platform, Stripe fee paid by platform,
+  // application fee returned from connected account to platform
+  const session = await stripe.checkout.sessions.create({
+    mode: "payment",
+    payment_method_types: ["card"],
+    line_items: [{
+      price_data: {
+        currency: "usd",
+        product_data: {
+          name: `Rent Payment — Unit ${tenant.unit}`,
+          description: `Payment to ${profile.pm_display_name || "your property manager"} via RentSentry`,
         },
-        quantity: 1,
-      }],
-      metadata: { tenant_id: tenant.id, landlord_id: user.id },
-      payment_intent_data: { application_fee_amount: feeCents },
-      success_url: `${process.env.NEXT_PUBLIC_APP_URL}/pay/success`,
-      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/pay/cancelled`,
+        unit_amount: amountCents,
+      },
+      quantity: 1,
+    }],
+    metadata: { tenant_id: tenant.id, landlord_id: user.id },
+    payment_intent_data: {
+      application_fee_amount: feeCents,
+      transfer_data: { destination: profile.stripe_account_id },
     },
-    { stripeAccount: profile.stripe_account_id }
-  )
+    success_url: `${process.env.NEXT_PUBLIC_APP_URL}/pay/success`,
+    cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/pay/cancelled`,
+  })
 
   // Send SMS to tenant with payment link
   if (tenant.phone && session.url) {
@@ -83,7 +85,7 @@ export async function POST(req: NextRequest) {
         snapshot: { amount: amountDollars, payment_url: session.url },
       })
     } catch {
-      // SMS failed but link was still created — not fatal
+      // SMS failed but link was created — not fatal
     }
   }
 

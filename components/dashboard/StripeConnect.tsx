@@ -1,6 +1,7 @@
 "use client"
 import { useState } from "react"
 import { CheckCircle2, CreditCard, ExternalLink } from "lucide-react"
+import { createClient } from "@/lib/supabase/client"
 
 export default function StripeConnect({
   connected,
@@ -11,9 +12,25 @@ export default function StripeConnect({
 }) {
   const [loading, setLoading] = useState(false)
 
-  function handleConnect() {
+  async function handleConnect() {
     setLoading(true)
-    window.location.href = "/api/billing/connect"
+    try {
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch("/api/billing/connect/create-account", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session?.access_token}`,
+        },
+      })
+      const data = await res.json()
+      if (data.url) {
+        window.location.href = data.url
+      }
+    } catch {
+      setLoading(false)
+    }
   }
 
   return (
@@ -46,7 +63,7 @@ export default function StripeConnect({
           className="mt-4 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 transition-colors text-sm font-semibold disabled:opacity-50"
         >
           <ExternalLink size={13} />
-          {loading ? "Redirecting to Stripe…" : "Connect Stripe Account"}
+          {loading ? "Setting up…" : "Connect Stripe Account"}
         </button>
       )}
 
