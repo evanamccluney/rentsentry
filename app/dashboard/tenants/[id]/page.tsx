@@ -22,6 +22,7 @@ import DecisionMathPanel from "@/components/dashboard/DecisionMathPanel"
 import CalculationExplainer from "@/components/dashboard/CalculationExplainer"
 import GeneratePayOrQuitNotice from "@/components/dashboard/GeneratePayOrQuitNotice"
 import SendPaymentLinkButton from "@/components/dashboard/SendPaymentLinkButton"
+import PaymentPlanButton from "@/components/dashboard/PaymentPlanButton"
 import { profileToEscalationRules } from "@/lib/escalation-rules"
 
 const TIER_CONFIG: Record<string, { label: string; dot: string; textColor: string; bg: string }> = {
@@ -245,6 +246,14 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
               balanceDue={t.balance_due ?? 0}
               stripeConnected={!!profile?.stripe_account_id}
             />
+            {planInstallments.length === 0 && (
+              <PaymentPlanButton
+                tenantId={t.id}
+                tenantName={t.name}
+                balanceDue={t.balance_due ?? 0}
+                stripeConnected={!!profile?.stripe_account_id}
+              />
+            )}
             <SituationIntakeButton tenantId={t.id} tenantName={t.name} />
             <HardshipButton tenantId={t.id} tenantName={t.name} />
             <TenantAIChat tenantId={t.id} tenantName={t.name} />
@@ -309,6 +318,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
           paidIndices={planPaidIndices}
           totalPlanAmount={planTotalAmount}
           frequency={planFrequency}
+          stripeConnected={!!profile?.stripe_account_id}
         />
       )}
 

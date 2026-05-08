@@ -28,7 +28,11 @@ export async function POST(req: NextRequest) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
 
-    const amountPaid = (session.amount_total || 0) / 100
+    // Use rent_amount_cents from metadata so fee is not deducted from balance
+    const rentAmountCents = parseInt(session.metadata?.rent_amount_cents || "0")
+    const amountPaid = rentAmountCents > 0
+      ? rentAmountCents / 100
+      : (session.amount_total || 0) / 100
 
     const { data: tenant } = await supabase
       .from("tenants")
@@ -42,13 +46,19 @@ export async function POST(req: NextRequest) {
       updated_at: new Date().toISOString(),
     }).eq("id", tenantId)
 
+    // For installment payments, note which installment was paid
+    const installmentIndex = session.metadata?.installment_index
+    const paymentNote = installmentIndex !== undefined
+      ? `installment:${installmentIndex}`
+      : "Paid via RentSentry payment link"
+
     await supabase.from("payments").insert({
       tenant_id: tenantId,
       user_id: landlordId,
       amount: amountPaid,
       date: new Date().toISOString().split("T")[0],
       source: "stripe_connect",
-      notes: "Paid via RentSentry payment link",
+      note: paymentNote,
     })
 
     await supabase.from("interventions").insert({
@@ -57,7 +67,11 @@ export async function POST(req: NextRequest) {
       type: "payment_link_paid",
       status: "sent",
       sent_at: new Date().toISOString(),
-      snapshot: { amount_paid: amountPaid, source: "stripe_connect" },
+      snapshot: {
+        amount_paid: amountPaid,
+        source: "stripe_connect",
+        installment_index: installmentIndex !== undefined ? parseInt(installmentIndex) : null,
+      },
     })
   }
 

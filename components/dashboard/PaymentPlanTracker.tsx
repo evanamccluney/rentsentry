@@ -1,6 +1,8 @@
 "use client"
 import { useState } from "react"
-import { CheckCircle2, Clock, AlertCircle } from "lucide-react"
+import { CheckCircle2, Clock, AlertCircle, Link2 } from "lucide-react"
+import { toast } from "sonner"
+import { createClient } from "@/lib/supabase/client"
 
 interface Installment {
   amount: number
@@ -13,6 +15,7 @@ interface Props {
   paidIndices: number[]
   totalPlanAmount: number
   frequency: string
+  stripeConnected: boolean
 }
 
 export default function PaymentPlanTracker({
@@ -21,9 +24,11 @@ export default function PaymentPlanTracker({
   paidIndices: initialPaid,
   totalPlanAmount,
   frequency,
+  stripeConnected,
 }: Props) {
   const [paid, setPaid] = useState<Set<number>>(new Set(initialPaid))
   const [loading, setLoading] = useState<number | null>(null)
+  const [sendingLink, setSendingLink] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const today = new Date().toISOString().split("T")[0]
@@ -35,12 +40,7 @@ export default function PaymentPlanTracker({
       const res = await fetch("/api/payments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tenantId,
-          amount,
-          date: today,
-          note: `installment:${index}`,
-        }),
+        body: JSON.stringify({ tenantId, amount, date: today, note: `installment:${index}` }),
       })
       if (!res.ok) throw new Error()
       setPaid(prev => new Set([...prev, index]))
@@ -48,6 +48,38 @@ export default function PaymentPlanTracker({
       setError("Failed to record payment. Try again.")
     } finally {
       setLoading(null)
+    }
+  }
+
+  async function sendLink(index: number, amount: number) {
+    setSendingLink(index)
+    setError(null)
+    try {
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch("/api/payments/send-installment", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({
+          tenantId,
+          installmentIndex: index,
+          amount,
+          totalInstallments: installments.length,
+        }),
+      })
+      const data = await res.json()
+      if (data.url) {
+        toast.success(`Installment ${index + 1} link sent via SMS`)
+      } else {
+        toast.error(data.error || "Could not send link")
+      }
+    } catch {
+      toast.error("Something went wrong")
+    } finally {
+      setSendingLink(null)
     }
   }
 
@@ -123,13 +155,27 @@ export default function PaymentPlanTracker({
               </div>
 
               {!isPaid && (
-                <button
-                  onClick={() => markPaid(i, inst.amount)}
-                  disabled={loading === i}
-                  className="text-xs font-medium px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors disabled:opacity-50 shrink-0 ml-3"
-                >
-                  {loading === i ? "Saving…" : "Mark Paid"}
-                </button>
+                <div className="flex items-center gap-2 shrink-0 ml-3">
+                  {stripeConnected && (
+                    <button
+                      onClick={() => sendLink(i, inst.amount)}
+                      disabled={sendingLink === i}
+                      className="text-xs font-medium px-3 py-1.5 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors disabled:opacity-50"
+                    >
+                      <span className="flex items-center gap-1">
+                        <Link2 size={10} />
+                        {sendingLink === i ? "Sending…" : "Send Link"}
+                      </span>
+                    </button>
+                  )}
+                  <button
+                    onClick={() => markPaid(i, inst.amount)}
+                    disabled={loading === i}
+                    className="text-xs font-medium px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
+                  >
+                    {loading === i ? "Saving…" : "Mark Paid"}
+                  </button>
+                </div>
               )}
             </div>
           )
