@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
 
-  const { tenantId, installments, frequency } = await req.json()
+  const { tenantId, installments, frequency, enableAutopay } = await req.json()
   // installments: [{ amount: number; due_date: string }, ...]
 
   const { data: profile } = await supabase
@@ -116,5 +116,42 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ url: session.url, success: true })
+  // If autopay enabled, create Stripe customer + setup session and SMS tenant
+  let autopayUrl: string | null = null
+  if (enableAutopay) {
+    let customerId = tenant.stripe_customer_id
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        name: tenant.name,
+        metadata: { tenant_id: tenant.id, landlord_id: user.id },
+      })
+      customerId = customer.id
+      await svc.from("tenants").update({
+        stripe_customer_id: customerId,
+        updated_at: new Date().toISOString(),
+      }).eq("id", tenant.id)
+    }
+
+    const setupSession = await stripe.checkout.sessions.create({
+      mode: "setup",
+      customer: customerId,
+      payment_method_types: ["card"],
+      metadata: { tenant_id: tenant.id, landlord_id: user.id },
+      success_url: `${process.env.NEXT_PUBLIC_APP_URL}/pay/autopay-confirmed`,
+      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/pay/cancelled`,
+    })
+    autopayUrl = setupSession.url
+
+    if (tenant.phone && setupSession.url) {
+      try {
+        await twilio.messages.create({
+          body: `Hi ${tenant.name}, save your card to enable autopay for your payment plan on Unit ${tenant.unit}: ${setupSession.url} Your card will be charged automatically on each due date. Reply STOP to opt out.`,
+          from: process.env.TWILIO_PHONE_NUMBER!,
+          to: tenant.phone,
+        })
+      } catch {}
+    }
+  }
+
+  return NextResponse.json({ url: session.url, autopayUrl, success: true })
 }

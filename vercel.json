@@ -1,6 +1,10 @@
 {
   "crons": [
     {
+      "path": "/api/cron/charge-installments",
+      "schedule": "0 6 * * *"
+    },
+    {
       "path": "/api/cron/phase1",
       "schedule": "0 8 * * *"
     },

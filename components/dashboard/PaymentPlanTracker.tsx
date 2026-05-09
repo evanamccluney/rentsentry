@@ -1,6 +1,6 @@
 "use client"
 import { useState } from "react"
-import { CheckCircle2, Clock, AlertCircle, Link2 } from "lucide-react"
+import { CheckCircle2, Clock, AlertCircle, Link2, Zap } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 
@@ -16,6 +16,7 @@ interface Props {
   totalPlanAmount: number
   frequency: string
   stripeConnected: boolean
+  autopayEnabled: boolean
 }
 
 export default function PaymentPlanTracker({
@@ -25,6 +26,7 @@ export default function PaymentPlanTracker({
   totalPlanAmount,
   frequency,
   stripeConnected,
+  autopayEnabled,
 }: Props) {
   const [paid, setPaid] = useState<Set<number>>(new Set(initialPaid))
   const [loading, setLoading] = useState<number | null>(null)
@@ -103,8 +105,16 @@ export default function PaymentPlanTracker({
         </div>
       </div>
 
-      <div className="text-[#9ca3af] text-xs mb-4">
-        {freqLabel} · ${totalPlanAmount.toLocaleString()} total · {paidCount}/{installments.length} installments paid
+      <div className="flex items-center gap-3 mb-4">
+        <span className="text-[#9ca3af] text-xs">
+          {freqLabel} · ${totalPlanAmount.toLocaleString()} total · {paidCount}/{installments.length} installments paid
+        </span>
+        {autopayEnabled && (
+          <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400">
+            <Zap size={9} />
+            Autopay on
+          </span>
+        )}
       </div>
 
       {/* Progress bar */}

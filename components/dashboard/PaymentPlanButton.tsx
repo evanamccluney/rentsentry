@@ -30,6 +30,7 @@ export default function PaymentPlanButton({
   const [open, setOpen] = useState(false)
   const [split, setSplit] = useState<2 | 3>(2)
   const [frequency, setFrequency] = useState<"biweekly" | "monthly">("biweekly")
+  const [enableAutopay, setEnableAutopay] = useState(true)
   const [loading, setLoading] = useState(false)
 
   if (!stripeConnected || balanceDue <= 0) return null
@@ -65,7 +66,7 @@ export default function PaymentPlanButton({
           "Content-Type": "application/json",
           Authorization: `Bearer ${session?.access_token}`,
         },
-        body: JSON.stringify({ tenantId, installments: getInstallments(), frequency }),
+        body: JSON.stringify({ tenantId, installments: getInstallments(), frequency, enableAutopay }),
       })
       const data = await res.json()
       if (data.success) {
@@ -167,6 +168,28 @@ export default function PaymentPlanButton({
                 )
               })}
             </div>
+
+            {/* Autopay toggle */}
+            <button
+              onClick={() => setEnableAutopay(p => !p)}
+              className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border mb-4 transition-colors ${
+                enableAutopay
+                  ? "bg-blue-500/10 border-blue-500/25"
+                  : "bg-white/[0.02] border-white/[0.06]"
+              }`}
+            >
+              <div className="text-left">
+                <div className={`text-sm font-medium ${enableAutopay ? "text-blue-300" : "text-[#6b7280]"}`}>
+                  Enable autopay
+                </div>
+                <div className="text-[#4b5563] text-xs mt-0.5">
+                  Tenant saves card — future installments charged automatically
+                </div>
+              </div>
+              <div className={`w-9 h-5 rounded-full transition-colors shrink-0 ml-3 ${enableAutopay ? "bg-blue-500" : "bg-white/10"}`}>
+                <div className={`w-4 h-4 rounded-full bg-white mt-0.5 transition-transform ${enableAutopay ? "translate-x-4" : "translate-x-0.5"}`} />
+              </div>
+            </button>
 
             <p className="text-[#374151] text-xs mb-5">
               First link sent immediately via SMS. Tenant pays 0.5% processing fee per installment. You receive the full amount.

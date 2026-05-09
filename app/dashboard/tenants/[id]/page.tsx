@@ -84,6 +84,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
       days_late_avg, late_payment_count, previous_delinquency,
       card_expiry, payment_method, last_payment_date,
       lease_start, lease_end, move_in_date, notes, resolution_status,
+      stripe_payment_method_id,
       properties(name, id, state, address)
     `)
     .eq("id", id)
@@ -319,6 +320,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
           totalPlanAmount={planTotalAmount}
           frequency={planFrequency}
           stripeConnected={!!profile?.stripe_account_id}
+          autopayEnabled={!!(t as typeof t & { stripe_payment_method_id?: string }).stripe_payment_method_id}
         />
       )}
 
