@@ -49,11 +49,16 @@ export async function POST(req: NextRequest) {
     }).eq("id", tenant.id)
   }
 
-  // Create setup session so tenant can save their card
+  // Create setup session so tenant can save their bank account or card
   const session = await stripe.checkout.sessions.create({
     mode: "setup",
     customer: customerId,
-    payment_method_types: ["card"],
+    payment_method_types: ["us_bank_account", "card"],
+    payment_method_options: {
+      us_bank_account: {
+        financial_connections: { permissions: ["payment_method"] },
+      },
+    },
     metadata: {
       tenant_id: tenant.id,
       landlord_id: user.id,
@@ -66,7 +71,7 @@ export async function POST(req: NextRequest) {
   if (tenant.phone && session.url) {
     try {
       await twilio.messages.create({
-        body: `Hi ${tenant.name}, your ${profile?.pm_display_name || "property manager"} has set up a payment plan for Unit ${tenant.unit}. Save your card for automatic payments: ${session.url} Reply STOP to opt out.`,
+        body: `Hi ${tenant.name}, your ${profile?.pm_display_name || "property manager"} has set up a payment plan for Unit ${tenant.unit}. Link your bank account for automatic payments (no card fees): ${session.url} Reply STOP to opt out.`,
         from: process.env.TWILIO_PHONE_NUMBER!,
         to: tenant.phone,
       })

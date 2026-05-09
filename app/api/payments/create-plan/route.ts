@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
 
   const { data: tenant } = await supabase
     .from("tenants")
-    .select("id, name, phone, unit, balance_due")
+    .select("id, name, phone, unit, balance_due, stripe_customer_id")
     .eq("id", tenantId)
     .eq("user_id", user.id)
     .single()
@@ -42,7 +42,12 @@ export async function POST(req: NextRequest) {
 
   const session = await stripe.checkout.sessions.create({
     mode: "payment",
-    payment_method_types: ["card"],
+    payment_method_types: ["us_bank_account", "card"],
+    payment_method_options: {
+      us_bank_account: {
+        financial_connections: { permissions: ["payment_method"] },
+      },
+    },
     line_items: [
       {
         price_data: {
@@ -135,7 +140,12 @@ export async function POST(req: NextRequest) {
     const setupSession = await stripe.checkout.sessions.create({
       mode: "setup",
       customer: customerId,
-      payment_method_types: ["card"],
+      payment_method_types: ["us_bank_account", "card"],
+      payment_method_options: {
+        us_bank_account: {
+          financial_connections: { permissions: ["payment_method"] },
+        },
+      },
       metadata: { tenant_id: tenant.id, landlord_id: user.id },
       success_url: `${process.env.NEXT_PUBLIC_APP_URL}/pay/autopay-confirmed`,
       cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/pay/cancelled`,
@@ -145,7 +155,7 @@ export async function POST(req: NextRequest) {
     if (tenant.phone && setupSession.url) {
       try {
         await twilio.messages.create({
-          body: `Hi ${tenant.name}, save your card to enable autopay for your payment plan on Unit ${tenant.unit}: ${setupSession.url} Your card will be charged automatically on each due date. Reply STOP to opt out.`,
+          body: `Hi ${tenant.name}, save your bank account to enable autopay for your payment plan on Unit ${tenant.unit}: ${setupSession.url} Installments will be charged automatically — no card fees. Reply STOP to opt out.`,
           from: process.env.TWILIO_PHONE_NUMBER!,
           to: tenant.phone,
         })

@@ -9,7 +9,7 @@ export default function AutopayConfirmedPage() {
         </div>
         <h1 className="text-2xl font-bold text-white mb-2">Autopay enabled</h1>
         <p className="text-[#6b7280] text-sm leading-relaxed mb-8">
-          Your card has been saved. Future installments will be charged automatically on their due dates — you don't need to do anything.
+          Your payment method has been saved. Future installments will be charged automatically on their due dates — you don't need to do anything.
         </p>
         <div className="flex items-center justify-center gap-2 text-[#4b5563] text-xs">
           <Shield size={11} className="text-blue-400" />

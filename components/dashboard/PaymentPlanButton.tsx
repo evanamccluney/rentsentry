@@ -183,7 +183,7 @@ export default function PaymentPlanButton({
                   Enable autopay
                 </div>
                 <div className="text-[#4b5563] text-xs mt-0.5">
-                  Tenant saves card — future installments charged automatically
+                  Tenant links bank account — future installments charged automatically
                 </div>
               </div>
               <div className={`w-9 h-5 rounded-full transition-colors shrink-0 ml-3 ${enableAutopay ? "bg-blue-500" : "bg-white/10"}`}>
