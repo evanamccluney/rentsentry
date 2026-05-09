@@ -178,7 +178,7 @@ export async function GET(req: NextRequest) {
   const userIds = [...new Set(tenants.map((t: { user_id: string }) => t.user_id))]
   const { data: profiles } = await supabase
     .from("profiles")
-    .select("id, auto_mode, pm_phone, pm_alerts_enabled, escalation_preset, reminder_day, payment_plan_day, pay_or_quit_day, cfk_review_day, attorney_review_day, repeat_offender_accelerator_days, pre_due_risk_outreach_enabled, pre_due_risk_review_days_before_due, require_attorney_before_notice, payment_plan_before_notice, custom_escalation_notes")
+    .select("id, auto_mode, pm_phone, pm_alerts_enabled, escalation_preset, reminder_day, payment_plan_day, pay_or_quit_day, cfk_review_day, attorney_review_day, repeat_offender_accelerator_days, pre_due_risk_outreach_enabled, pre_due_risk_review_days_before_due, require_attorney_before_notice, payment_plan_before_notice, custom_escalation_notes, stripe_account_id")
     .in("id", userIds)
 
   const autoModeByUser = new Map<string, boolean>(
@@ -186,6 +186,9 @@ export async function GET(req: NextRequest) {
   )
   const rulesByUser = new Map<string, EscalationRules>(
     (profiles ?? []).map((p: { id: string } & Record<string, unknown>) => [p.id, profileToEscalationRules(p)])
+  )
+  const stripeConnectedByUser = new Map<string, boolean>(
+    (profiles ?? []).map((p: { id: string; stripe_account_id?: string | null }) => [p.id, !!p.stripe_account_id])
   )
 
   const results = {
@@ -197,6 +200,7 @@ export async function GET(req: NextRequest) {
     skipped_no_trigger: 0,
     skipped_awaiting_pm: 0,
     installment_reminders: 0,
+    installment_offers: 0,
     errors: 0,
   }
 
@@ -428,6 +432,86 @@ export async function GET(req: NextRequest) {
             results.installment_reminders++
           }
           break // one reminder per tenant per day
+        }
+      }
+    }
+
+    // ── Rule G: Pre-delinquency installment offer ────────────────────────────────
+    // Fires 3-7 days before due date for at-risk tenants who have never been late
+    // but have a history pattern suggesting risk. Offers a split-payment plan
+    // proactively — preventing the missed payment entirely.
+    // Only fires when: Stripe connected, no existing plan, not already delinquent.
+    if (
+      (risk.tier === "watch" || risk.tier === "reminder") &&
+      hasHistory &&
+      !hasBalance &&
+      untilDue >= 3 && untilDue <= 7 &&
+      !planByTenant.has(t.id) &&
+      stripeConnectedByUser.get(t.user_id) &&
+      preDueRiskEnabled
+    ) {
+      triggered = true
+      results.evaluated++
+      const alreadySent = await recentlySent(supabase, t.id, "pre_due_installment_offer", 30)
+      if (alreadySent) {
+        results.skipped_dedup++
+      } else {
+        const rentAmount = t.rent_amount ?? 0
+        const half = Math.round(rentAmount / 2 * 100) / 100
+        const secondAmount = Math.round((rentAmount - half) * 100) / 100
+        const secondDate = new Date()
+        secondDate.setDate(secondDate.getDate() + 14)
+        const secondDateStr = secondDate.toISOString().split("T")[0]
+
+        const offerToken = crypto.randomUUID()
+        const offerUrl = `${process.env.NEXT_PUBLIC_APP_URL}/pay/offer/${offerToken}`
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+
+        const installments = [
+          { amount: half, due_date: today },
+          { amount: secondAmount, due_date: secondDateStr },
+        ]
+
+        const offerSnapshot = {
+          ...snapshot,
+          offer_token: offerToken,
+          installments,
+          rent_amount: rentAmount,
+          offer_url: offerUrl,
+          expires_at: expiresAt,
+        }
+
+        const smsBody = `Hi ${t.name}, rent of $${rentAmount.toLocaleString()} is due in ${untilDue} days. Split into 2 payments of $${half.toLocaleString()}? Set it up: ${offerUrl} Reply STOP to opt out.`
+
+        if (autoMode) {
+          try {
+            if (t.phone) {
+              await twilioClient.messages.create({ from: FROM_NUMBER, to: t.phone, body: smsBody })
+            }
+            await supabase.from("interventions").insert({
+              tenant_id: t.id,
+              user_id: t.user_id,
+              type: "pre_due_installment_offer",
+              status: "sent",
+              sent_at: new Date().toISOString(),
+              snapshot: offerSnapshot,
+            })
+            results.sent++
+            results.installment_offers++
+          } catch {
+            results.errors++
+          }
+        } else {
+          await supabase.from("interventions").insert({
+            tenant_id: t.id,
+            user_id: t.user_id,
+            type: "pre_due_installment_offer",
+            status: "dry_run",
+            sent_at: new Date().toISOString(),
+            snapshot: offerSnapshot,
+          })
+          results.dry_run++
+          results.installment_offers++
         }
       }
     }
