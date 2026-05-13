@@ -113,10 +113,6 @@ async function handleTenantReply(supabase: any, tenant: TenantRow, messageBody: 
   const priorCount = priorReplies?.length ?? 0
   const isFirstReply = priorCount === 0
 
-  if (priorCount >= 3) {
-    return twiml("You've reached the limit of automated replies this month. Please contact your property manager directly. Reply STOP to opt out.")
-  }
-
   // Fetch PM profile for display name, Stripe, and escalation rules
   const { data: profile } = await supabase
     .from("profiles")
@@ -166,7 +162,7 @@ async function handleTenantReply(supabase: any, tenant: TenantRow, messageBody: 
     `Tenant: ${tenant.name.split(" ")[0]}, Unit ${tenant.unit}`,
     `Balance due: $${(balance).toLocaleString()}`,
     `Days past due: ${days}`,
-    `Exchange: ${priorCount + 1} of 3 max${isFirstReply ? " — MUST disclose automated assistant in reply" : ""}`,
+    `Exchange: ${priorCount + 1}${isFirstReply ? " — MUST disclose automated assistant in reply" : ""}`,
   ]
   if ((tenant.late_payment_count ?? 0) > 0) contextLines.push(`Late payments on record: ${tenant.late_payment_count}`)
   if ((tenant.days_late_avg ?? 0) > 3) contextLines.push(`Typically pays ${Math.round(tenant.days_late_avg!)} days late on average`)
