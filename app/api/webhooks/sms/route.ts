@@ -120,6 +120,7 @@ async function handleTenantReply(supabase: any, tenant: TenantRow, messageBody: 
     .eq("id", tenant.user_id)
     .single()
 
+  console.log("sms-webhook profile:", JSON.stringify({ stripe_account_id: profile?.stripe_account_id ?? null, stripe_charges_enabled: profile?.stripe_charges_enabled ?? null }))
   const pmName = profile?.pm_display_name ?? "your property manager"
   const escalationRules = profileToEscalationRules(profile)
 
@@ -172,10 +173,16 @@ async function handleTenantReply(supabase: any, tenant: TenantRow, messageBody: 
   if (hasPlan) contextLines.push("Tenant already has an active payment plan — do NOT offer another one.")
   if (isPastCfkReview) contextLines.push(`IMPORTANT: This tenant is ${days} days past due — at cash-for-keys / eviction review territory. Do NOT offer payment links or plans. Acknowledge their message warmly and let them know their property manager will be in touch shortly.`)
 
+  // send_payment_link needs charges_enabled; send_plan_link only needs the account to exist
   const stripeReady = !!profile?.stripe_account_id && !!profile?.stripe_charges_enabled && !hasPlan && !isPastCfkReview
-  const availableActions = stripeReady
-    ? ["none", "send_payment_link", "send_plan_link", "escalate_to_pm"]
-    : ["none", "escalate_to_pm"]
+  const planLinkReady = !!profile?.stripe_account_id && !hasPlan && !isPastCfkReview
+  const availableActions = isPastCfkReview
+    ? ["none", "escalate_to_pm"]
+    : planLinkReady
+      ? stripeReady
+        ? ["none", "send_payment_link", "send_plan_link", "escalate_to_pm"]
+        : ["none", "send_plan_link", "escalate_to_pm"]
+      : ["none", "escalate_to_pm"]
 
   let aiReply = ""
   let aiAction = "none"
@@ -222,7 +229,7 @@ Rules:
     // Hard override: at CFK/eviction territory, always escalate regardless of AI pick
     if (isPastCfkReview) aiAction = "escalate_to_pm"
     // Safety net: if AI wrote about a plan/installments but forgot to set the action, fix it
-    if (aiAction === "none" && stripeReady && /plan|installment/i.test(aiReply)) {
+    if (aiAction === "none" && planLinkReady && /plan|installment/i.test(aiReply)) {
       aiAction = "send_plan_link"
     }
     if (typeof parsed.plan_installments === "number") planInstallments = Math.min(3, Math.max(2, parsed.plan_installments))
