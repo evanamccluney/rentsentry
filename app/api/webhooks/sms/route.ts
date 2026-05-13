@@ -303,7 +303,7 @@ Rules:
     const token = crypto.randomUUID()
     const expiresAt = new Date(now.getTime() + 7 * 86400000).toISOString()
 
-    await supabase.from("interventions").insert({
+    const { error: insertError } = await supabase.from("interventions").insert({
       tenant_id: tenant.id,
       user_id: tenant.user_id,
       type: "pre_due_installment_offer",
@@ -317,7 +317,12 @@ Rules:
         initiated_by: "tenant_chatbot",
       },
     })
-    actionUrl = `${APP_URL}/pay/offer/${token}`
+    if (insertError) {
+      console.error("send_plan_link insert error:", insertError.message)
+    } else {
+      actionUrl = `${APP_URL}/pay/offer/${token}`
+      console.log("send_plan_link actionUrl:", actionUrl)
+    }
   }
 
   if (aiAction === "escalate_to_pm") {
@@ -365,6 +370,7 @@ Rules:
   const finalMessage = actionUrl
     ? `${aiReply} ${actionUrl}\nReply STOP to opt out.`
     : `${aiReply}\nReply STOP to opt out.`
+  console.log("sms-webhook final:", JSON.stringify({ aiAction, actionUrl, msgLen: finalMessage.length }))
 
   // Log this exchange
   await supabase.from("interventions").insert({
