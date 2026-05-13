@@ -2,7 +2,7 @@ import { cookies } from "next/headers"
 
 export const TENANT_COOKIE = "rs_tenant"
 export const PENDING_PHONE_COOKIE = "rs_pending_phone"
-const SESSION_DAYS = 7
+export const SESSION_DAYS = 7
 
 async function hmacHex(data: string): Promise<string> {
   const secret = process.env.TENANT_SESSION_SECRET ?? "rentsentry-tenant-dev-secret"
