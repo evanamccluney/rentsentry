@@ -17,7 +17,7 @@ const PROFILE_SELECT = `
   auto_mode, auto_payment_plan_offers, pm_phone, pm_alerts_enabled, late_fee_percent, late_fee_day, pm_display_name,
   attorney_name, attorney_email, attorney_phone,
   plaid_item_id, plaid_connected_at,
-  stripe_account_id, stripe_connect_at,
+  stripe_account_id, stripe_connect_at, stripe_charges_enabled,
   escalation_preset, reminder_day, payment_plan_day, pay_or_quit_day,
   cfk_review_day, attorney_review_day, repeat_offender_accelerator_days,
   pre_due_risk_outreach_enabled, pre_due_risk_review_days_before_due,
@@ -128,6 +128,7 @@ export default function SettingsPage() {
   const [plaidConnectedAt, setPlaidConnectedAt] = useState<string | null>(null)
   const [stripeConnected, setStripeConnected] = useState(false)
   const [stripeConnectAt, setStripeConnectAt] = useState<string | null>(null)
+  const [stripeChargesEnabled, setStripeChargesEnabled] = useState(false)
   const [saving, setSaving] = useState(false)
   const [loaded, setLoaded] = useState(false)
 
@@ -161,6 +162,7 @@ export default function SettingsPage() {
         setPlaidConnectedAt(data.plaid_connected_at ?? null)
         setStripeConnected(!!data.stripe_account_id)
         setStripeConnectAt(data.stripe_connect_at ?? null)
+        setStripeChargesEnabled(data.stripe_charges_enabled ?? false)
         setRules(toRules(data))
       }
       setLoaded(true)
@@ -624,7 +626,7 @@ export default function SettingsPage() {
         <p className="text-[#4b5563] text-xs mb-4 leading-relaxed">
           Connect Stripe to send tenants a secure payment link when they{"'"}re late. Money goes directly to your account. A 0.5% platform fee is deducted — tenants pay nothing extra.
         </p>
-        <StripeConnect connected={stripeConnected} connectedAt={stripeConnectAt} />
+        <StripeConnect connected={stripeConnected} connectedAt={stripeConnectAt} chargesEnabled={stripeChargesEnabled} />
       </div>
 
       <button

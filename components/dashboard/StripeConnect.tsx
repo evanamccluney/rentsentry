@@ -1,14 +1,16 @@
 "use client"
 import { useState } from "react"
-import { CheckCircle2, CreditCard, ExternalLink } from "lucide-react"
+import { CheckCircle2, Clock, CreditCard, ExternalLink, AlertTriangle } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 
 export default function StripeConnect({
   connected,
   connectedAt,
+  chargesEnabled,
 }: {
   connected: boolean
   connectedAt: string | null
+  chargesEnabled: boolean
 }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -33,7 +35,7 @@ export default function StripeConnect({
         setError(data.error || "Something went wrong. Try again.")
         setLoading(false)
       }
-    } catch (e) {
+    } catch {
       setError("Network error. Try again.")
       setLoading(false)
     }
@@ -48,16 +50,25 @@ export default function StripeConnect({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <span className="text-white text-sm font-semibold">Payment Collection</span>
-            {connected && (
+            {!connected && null}
+            {connected && !chargesEnabled && (
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400">
+                Pending verification
+              </span>
+            )}
+            {connected && chargesEnabled && (
               <span className="text-[10px] font-semibold px-2 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-                Connected
+                Active
               </span>
             )}
           </div>
           <p className="text-[#6b7280] text-xs leading-relaxed">
-            {connected
-              ? `Connected ${connectedAt ? `since ${new Date(connectedAt).toLocaleDateString()}` : ""}. Send tenants a secure payment link when they're late. Tenants pay a 0.5% processing fee on top of rent — you receive the full rent amount.`
-              : "Send tenants a secure payment link when they're late. Money goes directly to your Stripe account. Tenants pay a 0.5% processing fee — you receive the full rent amount."}
+            {!connected
+              ? "Send tenants a secure payment link when they're late. Money goes directly to your Stripe account. Tenants pay a 0.5% processing fee — you receive the full rent amount."
+              : connected && !chargesEnabled
+              ? "Your Stripe account is connected but Stripe is still verifying your information. Payment links will activate automatically once approved — usually within a few minutes."
+              : `Connected since ${connectedAt ? new Date(connectedAt).toLocaleDateString() : "recently"}. Send tenants a secure payment link when they're late. Tenants pay a 0.5% processing fee — you receive the full rent amount.`
+            }
           </p>
           <p className="text-[#4b5563] text-[11px] leading-relaxed mt-1">
             Always ensure tenants have a free alternative (check or money order). You are responsible for compliance with your local landlord-tenant laws.
@@ -79,10 +90,17 @@ export default function StripeConnect({
         </>
       )}
 
-      {connected && (
+      {connected && !chargesEnabled && (
+        <div className="mt-3 flex items-center gap-2 text-amber-400 text-xs">
+          <Clock size={12} />
+          Waiting for Stripe to verify your account — this usually takes a few minutes
+        </div>
+      )}
+
+      {connected && chargesEnabled && (
         <div className="mt-3 flex items-center gap-2 text-emerald-400 text-xs">
           <CheckCircle2 size={12} />
-          Ready — use "Send Payment Link" on any delinquent tenant
+          Ready — use &quot;Send Payment Link&quot; on any delinquent tenant
         </div>
       )}
     </div>

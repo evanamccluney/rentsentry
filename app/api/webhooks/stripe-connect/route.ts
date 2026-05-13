@@ -114,6 +114,22 @@ export async function POST(req: NextRequest) {
     })
   }
 
+  if (event.type === "account.updated") {
+    const account = event.data.object as Stripe.Account
+    if (account.charges_enabled) {
+      await supabase
+        .from("profiles")
+        .update({ stripe_charges_enabled: true })
+        .eq("stripe_account_id", account.id)
+    } else {
+      await supabase
+        .from("profiles")
+        .update({ stripe_charges_enabled: false })
+        .eq("stripe_account_id", account.id)
+    }
+    return NextResponse.json({ received: true })
+  }
+
   if (event.type === "payment_intent.payment_failed") {
     const pi = event.data.object as Stripe.PaymentIntent
     if (pi.metadata?.is_autopay !== "true") return NextResponse.json({ received: true })
