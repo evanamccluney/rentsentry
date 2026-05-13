@@ -33,6 +33,10 @@ export async function POST(req: NextRequest) {
           transfers: { requested: true },
         },
         country: "US",
+        business_profile: {
+          url: process.env.NEXT_PUBLIC_APP_URL ?? "https://rentsentry.vercel.app",
+          mcc: "6513",
+        },
       })
 
       accountId = account.id
