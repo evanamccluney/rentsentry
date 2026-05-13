@@ -80,6 +80,14 @@ function emptyTwiml(): NextResponse {
   )
 }
 
+function detectIntent(msg: string): "send_payment_link" | "send_plan_link" | "escalate_to_pm" | null {
+  const m = msg.toLowerCase()
+  if (/installment|payment.?plan|pay.?over|split.?pay|spread|partial|multiple.?pay|pay.?in.?part|break.?it.?up|half.?now|two.?pay|three.?pay/.test(m)) return "send_plan_link"
+  if (/pay.?now|pay.?in.?full|pay.?today|pay.?it.?all|pay.?everything|full.?pay|pay.*balance|pay.?online|send.*link|i.?want.?to.?pay|how.?do.?i.?pay/.test(m)) return "send_payment_link"
+  if (/speak.?to|talk.?to|call.?me|call.?back|dispute|not.?my|wrong.?amount|maintenance|broken|repair/.test(m)) return "escalate_to_pm"
+  return null
+}
+
 // ── Tenant AI chatbot ─────────────────────────────────────────────────────────
 
 interface TenantRow {
@@ -193,13 +201,25 @@ async function handleTenantReply(supabase: any, tenant: TenantRow, messageBody: 
         : ["none", "send_plan_link", "escalate_to_pm"]
       : ["none", "escalate_to_pm"]
 
+  // Detect intent in code first — AI only writes the reply text, never picks the action alone
+  const rawIntent = detectIntent(messageBody)
+  const forcedAction = rawIntent && availableActions.includes(rawIntent) ? rawIntent : null
+
   let aiReply = ""
   let aiAction = "none"
   let situationSummary: string | null = null
-  let planInstallments = 2
-  let planDaysBetween = 14
+  let planInstallments = balance > 1500 || isStruggling ? 3 : 2
+  let planDaysBetween = balance > 800 ? 14 : 7
 
   try {
+    const actionNote = forcedAction
+      ? `Action pre-selected by system: ${forcedAction}. Write a reply appropriate for this action. Do NOT choose a different action.`
+      : `Available actions: ${availableActions.join(", ")}
+  - send_payment_link: tenant wants to pay the FULL balance right now
+  - send_plan_link: tenant needs to split the balance into installments — set plan_installments (2 or 3) and plan_days_between (7, 14, or 30)
+  - escalate_to_pm: disputes, maintenance, or issues you cannot resolve
+  - none: purely informational reply only`
+
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       max_tokens: 200,
@@ -214,14 +234,10 @@ ${contextLines.join("\n")}
 
 Rules:
 - Be empathetic, professional, and direct. Never threatening or condescending.
-- Available actions: ${availableActions.join(", ")}
-  - send_payment_link: use when tenant wants to pay the FULL balance right now
-  - send_plan_link: use when tenant asks about installments, a payment plan, splitting payments, or paying over time — set plan_installments (2 or 3) and plan_days_between (7, 14, or 30). Use 3 installments for balances over $1,500 or struggling tenants. Use 14 days apart unless balance is very small (then 7).
-  - escalate_to_pm: use ONLY for disputes, maintenance, or questions you genuinely cannot resolve
-  - none: use ONLY for purely informational replies where no payment action is appropriate
-- CRITICAL: If you decide to send a payment link or plan link, you MUST set the action field accordingly. NEVER write "I will set up a plan" or "I will send a link" with action "none" — that does nothing. The action field is what triggers the actual link. Your reply text should be short and confirm the link is on its way, e.g. "Here's your payment plan — click the link below to get started."
+- ${actionNote}
 - If this is exchange 1, your reply MUST begin with: "This is an automated assistant from ${pmName}."
 - Keep "reply" under 130 characters — a URL and opt-out line will be appended automatically.
+- For send_payment_link or send_plan_link replies, keep it brief: confirm a link is coming. Do not describe future actions without taking them.
 - Never mention eviction, court, legal proceedings, or attorneys — not even implicitly.
 - If the tenant shares useful context (job loss, medical, travel, etc.), capture it in situation_summary (under 100 chars).
 - Respond with JSON only: { "reply": "...", "action": "...", "plan_installments": 2, "plan_days_between": 14, "situation_summary": "..." }`,
@@ -234,13 +250,18 @@ Rules:
     const raw = response.choices[0]?.message?.content ?? "{}"
     const parsed = JSON.parse(raw)
     aiReply = (parsed.reply ?? "").trim()
-    aiAction = availableActions.includes(parsed.action) ? (parsed.action as string) : "none"
-    // Hard override: at CFK/eviction territory, always escalate regardless of AI pick
-    if (isPastCfkReview) aiAction = "escalate_to_pm"
-    // Safety net: if AI wrote about a plan/installments but forgot to set the action, fix it
-    if (aiAction === "none" && planLinkReady && /plan|installment/i.test(aiReply)) {
-      aiAction = "send_plan_link"
+
+    // Code-detected intent always wins over AI action choice
+    if (forcedAction) {
+      aiAction = forcedAction
+    } else {
+      aiAction = availableActions.includes(parsed.action) ? (parsed.action as string) : "none"
     }
+
+    // Hard overrides
+    if (isPastCfkReview) aiAction = "escalate_to_pm"
+    if (aiAction === "none" && planLinkReady && /plan|installment/i.test(aiReply)) aiAction = "send_plan_link"
+
     if (typeof parsed.plan_installments === "number") planInstallments = Math.min(3, Math.max(2, parsed.plan_installments))
     if (typeof parsed.plan_days_between === "number") planDaysBetween = Math.min(30, Math.max(7, parsed.plan_days_between))
     situationSummary = typeof parsed.situation_summary === "string" && parsed.situation_summary.trim()
