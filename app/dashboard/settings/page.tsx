@@ -1,5 +1,6 @@
 "use client"
 import { useEffect, useMemo, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
 import { Bell, CalendarClock, DollarSign, FileText, Phone, Scale, User, Zap } from "lucide-react"
@@ -108,7 +109,7 @@ function dayInput(
   )
 }
 
-export default function SettingsPage() {
+function SettingsPageInner() {
   const [autoMode, setAutoMode] = useState(false)
   const [autoPaymentPlanOffers, setAutoPaymentPlanOffers] = useState(true)
   const [timezone, setTimezone] = useState("America/New_York")
@@ -131,6 +132,7 @@ export default function SettingsPage() {
   const [stripeChargesEnabled, setStripeChargesEnabled] = useState(false)
   const [saving, setSaving] = useState(false)
   const [loaded, setLoaded] = useState(false)
+  const searchParams = useSearchParams()
 
   const ordered = useMemo(
     () => rules.paymentPlanDay <= rules.payOrQuitDay && rules.payOrQuitDay <= rules.cfkReviewDay && rules.cfkReviewDay <= rules.attorneyReviewDay,
@@ -142,7 +144,10 @@ export default function SettingsPage() {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
-      const { data } = await supabase.from("profiles").select(PROFILE_SELECT).eq("id", user.id).single()
+
+      const { data, error } = await supabase.from("profiles").select(PROFILE_SELECT).eq("id", user.id).single()
+      if (error) console.error("Settings profile load error:", error.message)
+
       if (data) {
         setAutoMode(data.auto_mode ?? false)
         setAutoPaymentPlanOffers(data.auto_payment_plan_offers ?? true)
@@ -165,10 +170,33 @@ export default function SettingsPage() {
         setStripeChargesEnabled(data.stripe_charges_enabled ?? false)
         setRules(toRules(data))
       }
+
+      // When returning from Stripe Connect onboarding, fetch live status from Stripe
+      if (searchParams.get("connect") === "success") {
+        try {
+          const session = await supabase.auth.getSession()
+          const res = await fetch("/api/billing/connect/status", {
+            headers: { Authorization: `Bearer ${session.data.session?.access_token}` },
+          })
+          const status = await res.json()
+          if (status.connected) {
+            setStripeConnected(true)
+            setStripeChargesEnabled(status.chargesEnabled)
+            if (status.chargesEnabled) {
+              toast.success("Stripe account verified and active!")
+            } else {
+              toast("Stripe connected — waiting for Stripe to verify your account. This usually takes a few minutes.")
+            }
+          }
+        } catch {
+          // non-critical
+        }
+      }
+
       setLoaded(true)
     }
     load()
-  }, [])
+  }, [searchParams])
 
   function updateRules(patch: Partial<EscalationRules>) {
     setRules(current => normalizeEscalationRules({ ...current, preset: "custom", ...patch }))
@@ -637,5 +665,14 @@ export default function SettingsPage() {
         {saving ? "Saving..." : "Save Settings"}
       </button>
     </div>
+  )
+}
+
+import { Suspense } from "react"
+export default function SettingsPage() {
+  return (
+    <Suspense>
+      <SettingsPageInner />
+    </Suspense>
   )
 }
