@@ -199,10 +199,11 @@ ${contextLines.join("\n")}
 Rules:
 - Be empathetic, professional, and direct. Never threatening or condescending.
 - Available actions: ${availableActions.join(", ")}
-  - send_payment_link: tenant wants to pay the full balance now via secure link
-  - send_plan_link: tenant needs to split the balance into installments — also set plan_installments (2 or 3) and plan_days_between (7, 14, or 30). Use 3 installments for balances over $1,500 or struggling tenants. Use 7 days apart for small balances, 14 or 30 for larger ones.
-  - escalate_to_pm: issue needs human attention (disputes, maintenance, questions you can't resolve)
-  - none: informational reply only
+  - send_payment_link: use when tenant wants to pay the FULL balance right now
+  - send_plan_link: use when tenant asks about installments, a payment plan, splitting payments, or paying over time — set plan_installments (2 or 3) and plan_days_between (7, 14, or 30). Use 3 installments for balances over $1,500 or struggling tenants. Use 14 days apart unless balance is very small (then 7).
+  - escalate_to_pm: use ONLY for disputes, maintenance, or questions you genuinely cannot resolve
+  - none: use ONLY for purely informational replies where no payment action is appropriate
+- CRITICAL: If you decide to send a payment link or plan link, you MUST set the action field accordingly. NEVER write "I will set up a plan" or "I will send a link" with action "none" — that does nothing. The action field is what triggers the actual link. Your reply text should be short and confirm the link is on its way, e.g. "Here's your payment plan — click the link below to get started."
 - If this is exchange 1, your reply MUST begin with: "This is an automated assistant from ${pmName}."
 - Keep "reply" under 130 characters — a URL and opt-out line will be appended automatically.
 - Never mention eviction, court, legal proceedings, or attorneys — not even implicitly.
@@ -220,6 +221,10 @@ Rules:
     aiAction = availableActions.includes(parsed.action) ? (parsed.action as string) : "none"
     // Hard override: at CFK/eviction territory, always escalate regardless of AI pick
     if (isPastCfkReview) aiAction = "escalate_to_pm"
+    // Safety net: if AI wrote about a plan/installments but forgot to set the action, fix it
+    if (aiAction === "none" && stripeReady && /plan|installment/i.test(aiReply)) {
+      aiAction = "send_plan_link"
+    }
     if (typeof parsed.plan_installments === "number") planInstallments = Math.min(3, Math.max(2, parsed.plan_installments))
     if (typeof parsed.plan_days_between === "number") planDaysBetween = Math.min(30, Math.max(7, parsed.plan_days_between))
     situationSummary = typeof parsed.situation_summary === "string" && parsed.situation_summary.trim()
