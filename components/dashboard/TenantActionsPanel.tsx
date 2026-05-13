@@ -1,7 +1,7 @@
 "use client"
 import { useState, useRef } from "react"
 import { toast } from "sonner"
-import { Phone, FileText, MessageSquare, Send, X, DollarSign } from "lucide-react"
+import { Phone, FileText, MessageSquare, Send, X, DollarSign, Sparkles } from "lucide-react"
 
 interface Props {
   tenant: {
@@ -77,11 +77,13 @@ export default function TenantActionsPanel({ tenant }: Props) {
 
   // Custom SMS form state
   const [smsBody, setSmsBody] = useState("")
+  const [draftingAI, setDraftingAI] = useState(false)
 
   // Record payment form state
   const [paymentAmount, setPaymentAmount] = useState("")
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split("T")[0])
   const [paymentNote, setPaymentNote] = useState("")
+  const [paymentConfirming, setPaymentConfirming] = useState(false)
 
   function closeModal() {
     setModal(null)
@@ -93,9 +95,11 @@ export default function TenantActionsPanel({ tenant }: Props) {
     setPlanFrequency("monthly")
     setPlanNote("")
     setSmsBody("")
+    setDraftingAI(false)
     setPaymentAmount("")
     setPaymentDate(new Date().toISOString().split("T")[0])
     setPaymentNote("")
+    setPaymentConfirming(false)
   }
 
   async function submitCall() {
@@ -154,6 +158,32 @@ export default function TenantActionsPanel({ tenant }: Props) {
       if (data.ok) { toast.success(data.message || "Payment recorded."); closeModal(); window.location.reload() }
       else toast.error(data.error || "Something went wrong.")
     } finally { setLoading(false) }
+  }
+
+  async function draftWithAI() {
+    setDraftingAI(true)
+    try {
+      const res = await fetch("/api/ai/draft-sms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenantName: tenant.name,
+          tier: tenant.tier,
+          balanceDue: tenant.balance_due,
+          daysPastDue: tenant.days_past_due,
+          latePaymentCount: tenant.late_payment_count,
+          daysLateAvg: tenant.days_late_avg,
+          pmDisplayName: null,
+        }),
+      })
+      const data = await res.json()
+      if (data.message) setSmsBody(data.message)
+      else toast.error(data.error || "Could not generate draft.")
+    } catch {
+      toast.error("Draft failed. Try again.")
+    } finally {
+      setDraftingAI(false)
+    }
   }
 
   async function submitSMS() {
@@ -402,7 +432,7 @@ export default function TenantActionsPanel({ tenant }: Props) {
             )}
 
             {/* Record Payment */}
-            {modal === "payment" && (
+            {modal === "payment" && !paymentConfirming && (
               <div className="p-6">
                 <div className="flex items-center justify-between mb-5">
                   <div>
@@ -445,12 +475,6 @@ export default function TenantActionsPanel({ tenant }: Props) {
                     </div>
                   </div>
 
-                  {tenant.balance_due > 0 && paymentAmount && parseFloat(paymentAmount) >= tenant.balance_due && (
-                    <div className="px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs">
-                      This will clear the outstanding balance.
-                    </div>
-                  )}
-
                   <div>
                     <label className="text-[#4b5563] text-xs uppercase tracking-wide block mb-2">Note <span className="normal-case text-[#2e3a50]">(optional)</span></label>
                     <input
@@ -468,16 +492,86 @@ export default function TenantActionsPanel({ tenant }: Props) {
                     Cancel
                   </button>
                   <button
-                    onClick={submitPayment}
-                    disabled={loading}
-                    className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                    onClick={() => {
+                      const amount = parseFloat(paymentAmount)
+                      if (!amount || amount <= 0) { toast.error("Enter a valid payment amount."); return }
+                      setPaymentConfirming(true)
+                    }}
+                    className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2"
                   >
                     <DollarSign size={13} />
-                    {loading ? "Saving…" : "Record Payment"}
+                    Review Payment
                   </button>
                 </div>
               </div>
             )}
+
+            {/* Record Payment — Confirmation step */}
+            {modal === "payment" && paymentConfirming && (() => {
+              const amount = parseFloat(paymentAmount)
+              const newBalance = Math.max(0, tenant.balance_due - amount)
+              const clears = amount >= tenant.balance_due && tenant.balance_due > 0
+              return (
+                <div className="p-6">
+                  <div className="flex items-center justify-between mb-5">
+                    <div>
+                      <h3 className="text-white font-semibold text-base">Confirm Payment</h3>
+                      <p className="text-[#4b5563] text-xs mt-0.5">{tenant.name}</p>
+                    </div>
+                    <button onClick={closeModal} className="text-[#4b5563] hover:text-white transition-colors">
+                      <X size={16} />
+                    </button>
+                  </div>
+
+                  <div className={`rounded-xl border p-4 mb-4 ${clears ? "bg-emerald-500/8 border-emerald-500/20" : "bg-white/[0.03] border-white/[0.06]"}`}>
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-[#6b7280] text-xs uppercase tracking-wide">Recording payment</span>
+                      <span className="text-white font-bold text-xl">${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    </div>
+                    <div className="space-y-1.5 text-xs">
+                      <div className="flex justify-between text-[#6b7280]">
+                        <span>Current balance</span>
+                        <span className="tabular-nums text-white">${tenant.balance_due.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between text-[#6b7280]">
+                        <span>Payment date</span>
+                        <span className="text-white">{new Date(paymentDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                      </div>
+                      {paymentNote && (
+                        <div className="flex justify-between text-[#6b7280]">
+                          <span>Note</span>
+                          <span className="text-white truncate ml-4 max-w-[180px]">{paymentNote}</span>
+                        </div>
+                      )}
+                      <div className="border-t border-white/5 pt-2 mt-2 flex justify-between font-semibold">
+                        <span className="text-[#6b7280]">Balance after</span>
+                        <span className={clears ? "text-emerald-400" : "text-white"}>${newBalance.toLocaleString()}</span>
+                      </div>
+                    </div>
+                    {clears && (
+                      <div className="mt-3 text-emerald-400 text-xs font-medium">Balance will be cleared.</div>
+                    )}
+                  </div>
+
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => setPaymentConfirming(false)}
+                      className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-[#9ca3af] bg-white/5 hover:bg-white/10 transition-colors"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={submitPayment}
+                      disabled={loading}
+                      className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      <DollarSign size={13} />
+                      {loading ? "Saving…" : "Confirm"}
+                    </button>
+                  </div>
+                </div>
+              )
+            })()}
 
             {/* Custom SMS */}
             {modal === "sms" && (
@@ -493,7 +587,17 @@ export default function TenantActionsPanel({ tenant }: Props) {
                 </div>
 
                 <div>
-                  <label className="text-[#4b5563] text-xs uppercase tracking-wide block mb-2">Message</label>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-[#4b5563] text-xs uppercase tracking-wide">Message</label>
+                    <button
+                      onClick={draftWithAI}
+                      disabled={draftingAI}
+                      className="flex items-center gap-1 text-[10px] text-[#6b7280] hover:text-blue-400 transition-colors disabled:opacity-50"
+                    >
+                      <Sparkles size={10} />
+                      {draftingAI ? "Drafting…" : "Write for me"}
+                    </button>
+                  </div>
                   <textarea
                     value={smsBody}
                     onChange={e => setSmsBody(e.target.value)}

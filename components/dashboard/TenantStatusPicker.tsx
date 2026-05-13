@@ -5,11 +5,14 @@ import { toast } from "sonner"
 import { ChevronDown } from "lucide-react"
 
 const STATUS_OPTIONS = [
-  { value: null,              label: "Active",          color: "bg-emerald-500/15 text-emerald-400 border-emerald-500/20" },
-  { value: "payment_plan",   label: "Payment Plan",    color: "bg-amber-500/15 text-amber-400 border-amber-500/20" },
-  { value: "eviction_filed", label: "Eviction Filed",  color: "bg-red-500/15 text-red-400 border-red-500/20" },
-  { value: "vacated",        label: "Vacated",         color: "bg-white/10 text-[#9ca3af] border-white/10" },
-  { value: "collections",   label: "Collections",     color: "bg-purple-500/15 text-purple-400 border-purple-500/20" },
+  { value: null,              label: "Active",          color: "bg-emerald-500/15 text-emerald-400 border-emerald-500/20",  dot: "bg-emerald-500", outcomeLabel: null },
+  { value: "payment_plan",   label: "Payment Plan",    color: "bg-amber-500/15 text-amber-400 border-amber-500/20",        dot: "bg-amber-500",   outcomeLabel: "Payment plan agreed" },
+  { value: "cash_for_keys",  label: "Cash for Keys",   color: "bg-blue-500/15 text-blue-400 border-blue-500/20",           dot: "bg-blue-500",    outcomeLabel: "Cash for Keys agreed" },
+  { value: "eviction_filed", label: "Eviction Filed",  color: "bg-red-500/15 text-red-400 border-red-500/20",              dot: "bg-red-500",     outcomeLabel: "Eviction filed" },
+  { value: "resolved",       label: "Resolved",        color: "bg-teal-500/15 text-teal-400 border-teal-500/20",           dot: "bg-teal-500",    outcomeLabel: "Balance resolved / paid in full" },
+  { value: "vacated",        label: "Vacated",         color: "bg-white/10 text-[#9ca3af] border-white/10",                dot: "bg-[#4b5563]",   outcomeLabel: "Tenant vacated" },
+  { value: "wrote_off",      label: "Wrote Off",       color: "bg-white/5 text-[#6b7280] border-white/5",                  dot: "bg-[#374151]",   outcomeLabel: "Balance written off" },
+  { value: "collections",    label: "Collections",     color: "bg-purple-500/15 text-purple-400 border-purple-500/20",     dot: "bg-purple-500",  outcomeLabel: "Sent to collections" },
 ]
 
 export default function TenantStatusPicker({
@@ -33,11 +36,30 @@ export default function TenantStatusPicker({
       .from("tenants")
       .update({
         resolution_status: value,
-        ...(value === "vacated" ? { status: "vacated" } : {}),
+        ...(value === "vacated" || value === "resolved" ? { status: "vacated" } : {}),
       })
       .eq("id", tenantId)
     if (error) { toast.error("Could not update status."); setSaving(false); return }
     setStatus(value)
+
+    // Log outcome to activity log whenever PM marks a resolution
+    const opt = STATUS_OPTIONS.find(o => o.value === value)
+    if (opt?.outcomeLabel) {
+      await fetch("/api/interventions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenantId,
+          type: "resolution_outcome",
+          notes: opt.outcomeLabel,
+          snapshot: { outcome: value },
+          phone: null,
+          name: "",
+          message: null,
+        }),
+      })
+    }
+
     toast.success("Status updated.")
     setSaving(false)
   }
@@ -65,13 +87,7 @@ export default function TenantStatusPicker({
                   status === opt.value ? "text-white bg-white/[0.04]" : "text-[#9ca3af]"
                 }`}
               >
-                <span className={`inline-block w-1.5 h-1.5 rounded-full mr-2 ${
-                  opt.value === null ? "bg-emerald-500" :
-                  opt.value === "payment_plan" ? "bg-amber-500" :
-                  opt.value === "eviction_filed" ? "bg-red-500" :
-                  opt.value === "vacated" ? "bg-[#4b5563]" :
-                  "bg-purple-500"
-                }`} />
+                <span className={`inline-block w-1.5 h-1.5 rounded-full mr-2 ${opt.dot}`} />
                 {opt.label}
               </button>
             ))}

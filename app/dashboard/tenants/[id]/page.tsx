@@ -20,10 +20,16 @@ import CfkFollowUpBanner from "@/components/dashboard/CfkFollowUpBanner"
 import SituationIntakeButton from "@/components/dashboard/SituationIntakeButton"
 import DecisionMathPanel from "@/components/dashboard/DecisionMathPanel"
 import CalculationExplainer from "@/components/dashboard/CalculationExplainer"
-import GeneratePayOrQuitNotice from "@/components/dashboard/GeneratePayOrQuitNotice"
 import SendPaymentLinkButton from "@/components/dashboard/SendPaymentLinkButton"
 import PaymentPlanButton from "@/components/dashboard/PaymentPlanButton"
+import ActionPlanCard from "@/components/dashboard/ActionPlanCard"
+import TenantResponsePrompt from "@/components/dashboard/TenantResponsePrompt"
+import LeaseRenewalAssessment from "@/components/dashboard/LeaseRenewalAssessment"
+import TenantRiskTrend from "@/components/dashboard/TenantRiskTrend"
+import LegalNoticeGenerator from "@/components/dashboard/LegalNoticeGenerator"
+import CollectionsHandoff from "@/components/dashboard/CollectionsHandoff"
 import { profileToEscalationRules } from "@/lib/escalation-rules"
+import { buildActionPlan } from "@/lib/action-plan"
 
 const TIER_CONFIG: Record<string, { label: string; dot: string; textColor: string; bg: string }> = {
   legal:        { label: "Eviction Recommended",     dot: "bg-red-500",     textColor: "text-red-400",     bg: "bg-red-500/10 border-red-500/20" },
@@ -49,7 +55,8 @@ function initials(name: string) {
 }
 function formatDate(iso?: string | null) {
   if (!iso) return "—"
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+  const d = iso.length === 10 ? new Date(iso + "T00:00:00") : new Date(iso)
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
 }
 function daysUntil(iso?: string | null) {
   if (!iso) return null
@@ -108,11 +115,19 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
   const tenant = t as typeof t & TenantRecord
   const property = tenant.properties ?? null
 
-  const { data: interventions } = await supabase
-    .from("interventions")
-    .select("id, type, sent_at, status, notes, snapshot")
-    .eq("tenant_id", t.id)
-    .order("sent_at", { ascending: false })
+  const [{ data: interventions }, { data: payments }] = await Promise.all([
+    supabase
+      .from("interventions")
+      .select("id, type, sent_at, status, notes, snapshot")
+      .eq("tenant_id", t.id)
+      .order("sent_at", { ascending: false }),
+    supabase
+      .from("payments")
+      .select("id, amount, date, note")
+      .eq("tenant_id", t.id)
+      .order("date", { ascending: false })
+      .limit(24),
+  ])
 
   // Payment plan tracker data
   const activePlan = interventions?.find(i => i.type === "payment_plan_agreed")
@@ -138,6 +153,12 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
       .filter(n => !isNaN(n))
   }
 
+  const rentDueDay = t.rent_due_day ?? 1
+  const _now = new Date()
+  const _thisMonth = new Date(_now.getFullYear(), _now.getMonth(), rentDueDay)
+  const _nextDue = _thisMonth > _now ? _thisMonth : new Date(_now.getFullYear(), _now.getMonth() + 1, rentDueDay)
+  const daysUntilNextDue = Math.ceil((_nextDue.getTime() - _now.getTime()) / (1000 * 60 * 60 * 24))
+
   const risk = scoreTenant({
     days_late_avg: t.days_late_avg ?? 0,
     late_payment_count: t.late_payment_count ?? 0,
@@ -147,7 +168,8 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
     balance_due: t.balance_due ?? 0,
     rent_amount: t.rent_amount ?? 0,
     last_payment_date: t.last_payment_date ?? undefined,
-    rent_due_day: t.rent_due_day ?? 1,
+    rent_due_day: rentDueDay,
+    days_until_due: daysUntilNextDue,
     escalation_rules: escalationRules,
   })
 
@@ -166,6 +188,23 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
     state: pmState,
   })
 
+  const actionPlan = buildActionPlan(risk, interventions ?? [])
+
+  const OUTBOUND_TYPES = new Set([
+    "payment_reminder", "proactive_reminder", "card_expiry_alert",
+    "split_pay_offer", "cash_for_keys", "legal_packet", "custom_sms",
+    "pre_due_delinquent_warning", "pre_due_urgent", "installment_reminder",
+  ])
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+  const todayUTCDate = new Date().toISOString().split("T")[0]
+  const hasRecentOutbound = (interventions ?? []).some(
+    i => OUTBOUND_TYPES.has(i.type) && new Date(i.sent_at) >= sevenDaysAgo
+  )
+  const alreadyLoggedToday = (interventions ?? []).some(
+    i => i.type === "tenant_response" && i.sent_at.startsWith(todayUTCDate)
+  )
+  const showResponsePrompt = hasRecentOutbound && !alreadyLoggedToday && risk.tier !== "healthy"
+
   const showCostComparison = risk.days_past_due >= 3 && (t.balance_due ?? 0) > 0
 
   const showEscalationBanner =
@@ -179,16 +218,6 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
     ? Math.floor((nowMs - new Date(lastCfk.sent_at).getTime()) / (1000 * 60 * 60 * 24))
     : 0
   const showCfkFollowUp = !!lastCfk && daysSinceCfk >= 5 && (t.balance_due ?? 0) > 0
-
-  // Days until next rent due date (for timeline + risk context)
-  const daysUntilNextDue = (() => {
-    const now = new Date()
-    const dueDay = Math.min(Math.max(t.rent_due_day ?? 1, 1), 28)
-    const thisMonth = new Date(now.getFullYear(), now.getMonth(), dueDay)
-    const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, dueDay)
-    const target = thisMonth > now ? thisMonth : nextMonth
-    return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
-  })()
 
   const tenantForActions = {
     id: t.id,
@@ -298,6 +327,20 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
         )}
       </div>
 
+      {showResponsePrompt && <TenantResponsePrompt tenantId={t.id} tenantName={t.name} />}
+      {actionPlan && <ActionPlanCard plan={actionPlan} tenantId={t.id} />}
+
+      <CollectionsHandoff
+        tenantId={t.id}
+        tenantName={t.name}
+        tier={risk.tier}
+        balanceDue={t.balance_due ?? 0}
+        daysPastDue={risk.days_past_due}
+        hasInterventions={!!(interventions && interventions.length > 0)}
+        hasPayments={!!(payments && payments.length > 0)}
+        hasLegalNotice={!!(interventions && interventions.some(i => i.type === "legal_packet"))}
+      />
+
       <DecisionMathPanel
         balanceDue={t.balance_due ?? 0}
         rentAmount={t.rent_amount ?? 0}
@@ -350,6 +393,12 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
         />
       )}
 
+      <TenantRiskTrend
+        payments={(payments ?? []).map(p => ({ date: p.date, amount: p.amount }))}
+        rentAmount={t.rent_amount ?? 0}
+        rentDueDay={t.rent_due_day ?? 1}
+      />
+
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
         {[
@@ -365,11 +414,29 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
         ))}
       </div>
 
+      {/* Lease renewal assessment — within 90 days */}
+      {t.lease_end && leaseExpiresDays !== null && leaseExpiresDays <= 90 && (
+        <LeaseRenewalAssessment
+          tenantName={t.name}
+          unit={t.unit}
+          leaseEnd={t.lease_end}
+          latePaymentCount={t.late_payment_count ?? 0}
+          daysLateAvg={t.days_late_avg ?? 0}
+          previousDelinquency={t.previous_delinquency ?? false}
+          currentBalance={t.balance_due ?? 0}
+          rentAmount={t.rent_amount ?? 0}
+          pmDisplayName={(profile as Record<string, unknown>)?.pm_display_name as string ?? null}
+          pmPhone={(profile as Record<string, unknown>)?.pm_phone as string ?? null}
+          propertyAddress={(property as TenantProperty)?.address ?? null}
+          propertyState={pmState}
+        />
+      )}
+
       {/* Lease + payment info */}
       <div className="bg-[#111827] border border-white/10 rounded-2xl p-5 mb-5">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-white font-semibold text-sm">Lease & Payment Info</h2>
-          {t.lease_end && (leaseExpiresDays === null || leaseExpiresDays <= 60) && (
+          {(!t.lease_end || (leaseExpiresDays !== null && leaseExpiresDays <= 60)) && (
             <LeaseRenewalButton
               tenantId={t.id}
               tenantName={t.name}
@@ -570,7 +637,7 @@ export default async function TenantDetailPage({ params }: { params: Promise<{ i
             <p className="text-[#374151] text-xs">
               Estimates based on {pmState ?? "national"} averages. Attorney fees and timelines vary. RentSentry never auto-sends legal notices — you review every action.
             </p>
-            <GeneratePayOrQuitNotice
+            <LegalNoticeGenerator
               tenantName={t.name}
               unit={t.unit}
               propertyName={property?.name ?? null}

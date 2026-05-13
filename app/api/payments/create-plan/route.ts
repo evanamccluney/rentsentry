@@ -1,17 +1,22 @@
 import { NextRequest, NextResponse } from "next/server"
 import Stripe from "stripe"
-import Twilio from "twilio"
 import { createClient } from "@/lib/supabase/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
+import { sendTenantSms } from "@/lib/sms"
+
+import { FEE_RATE } from "@/lib/payment-config"
+import { checkRateLimit } from "@/lib/rate-limit"
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!)
-const twilio = Twilio(process.env.TWILIO_ACCOUNT_SID!, process.env.TWILIO_AUTH_TOKEN!)
-const FEE_RATE = 0.005
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
+
+  if (!checkRateLimit(`payment-plan:${user.id}`, 5, 60_000)) {
+    return NextResponse.json({ error: "Too many requests. Wait a minute and try again." }, { status: 429 })
+  }
 
   const { tenantId, installments, frequency, enableAutopay } = await req.json()
   // installments: [{ amount: number; due_date: string }, ...]
@@ -109,16 +114,12 @@ export async function POST(req: NextRequest) {
   }).eq("id", tenant.id)
 
   if (tenant.phone && session.url) {
-    try {
-      const freqLabel = frequency === "biweekly" ? "every 2 weeks" : frequency === "weekly" ? "weekly" : "monthly"
-      await twilio.messages.create({
-        body: `Hi ${tenant.name}, your ${profile.pm_display_name || "property manager"} set up a ${installments.length}-payment plan for Unit ${tenant.unit}. Pay installment 1 ($${first.amount.toLocaleString()}) now: ${session.url} You may also pay by check. Reply STOP to opt out.`,
-        from: process.env.TWILIO_PHONE_NUMBER!,
-        to: tenant.phone,
-      })
-    } catch {
-      // SMS failure is not fatal
-    }
+    await sendTenantSms(
+      svc,
+      tenant.id,
+      tenant.phone,
+      `Hi ${tenant.name}, your ${profile.pm_display_name || "property manager"} set up a ${installments.length}-payment plan for Unit ${tenant.unit}. Pay installment 1 ($${first.amount.toLocaleString()}) now: ${session.url} You may also pay by check. Reply STOP to opt out.`
+    )
   }
 
   // If autopay enabled, create Stripe customer + setup session and SMS tenant
@@ -153,13 +154,12 @@ export async function POST(req: NextRequest) {
     autopayUrl = setupSession.url
 
     if (tenant.phone && setupSession.url) {
-      try {
-        await twilio.messages.create({
-          body: `Hi ${tenant.name}, save your bank account to enable autopay for your payment plan on Unit ${tenant.unit}: ${setupSession.url} Installments will be charged automatically — no card fees. Reply STOP to opt out.`,
-          from: process.env.TWILIO_PHONE_NUMBER!,
-          to: tenant.phone,
-        })
-      } catch {}
+      await sendTenantSms(
+        svc,
+        tenant.id,
+        tenant.phone,
+        `Hi ${tenant.name}, save your bank account to enable autopay for your payment plan on Unit ${tenant.unit}: ${setupSession.url} Installments will be charged automatically — no card fees. Reply STOP to opt out.`
+      )
     }
   }
 

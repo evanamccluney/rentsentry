@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
 import Stripe from "stripe"
-import Twilio from "twilio"
 import { createClient } from "@/lib/supabase/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
+import { sendTenantSms } from "@/lib/sms"
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!)
-const twilio = Twilio(process.env.TWILIO_ACCOUNT_SID!, process.env.TWILIO_AUTH_TOKEN!)
 const FEE_RATE = 0.005
 
 export async function POST(req: NextRequest) {
@@ -88,13 +87,12 @@ export async function POST(req: NextRequest) {
   )
 
   if (tenant.phone && session.url) {
-    try {
-      await twilio.messages.create({
-        body: `Hi ${tenant.name}, installment ${installmentNum} of ${totalInstallments} ($${amount.toLocaleString()}) is due for Unit ${tenant.unit}. Pay now: ${session.url} Reply STOP to opt out.`,
-        from: process.env.TWILIO_PHONE_NUMBER!,
-        to: tenant.phone,
-      })
-    } catch {}
+    await sendTenantSms(
+      supabase,
+      tenant.id,
+      tenant.phone,
+      `Hi ${tenant.name}, installment ${installmentNum} of ${totalInstallments} ($${amount.toLocaleString()}) is due for Unit ${tenant.unit}. Pay now: ${session.url} Reply STOP to opt out.`
+    )
   }
 
   await svc.from("interventions").insert({

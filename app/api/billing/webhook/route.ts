@@ -138,11 +138,15 @@ export async function POST(req: NextRequest) {
 
     const { data: profile } = await supabase
       .from("profiles")
-      .select("pm_phone")
+      .select("pm_phone, pm_alerts_enabled, pm_alert_triggers")
       .eq("id", landlordId)
       .single()
 
-    if (profile?.pm_phone && tenant) {
+    const triggers: string[] = Array.isArray(profile?.pm_alert_triggers)
+      ? profile.pm_alert_triggers
+      : ["autopay_declined"]
+
+    if (profile?.pm_alerts_enabled && triggers.includes("autopay_declined") && profile?.pm_phone && tenant) {
       try {
         const installmentLabel = installmentIndex !== undefined
           ? ` (installment ${parseInt(installmentIndex) + 1})`

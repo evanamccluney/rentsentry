@@ -4,6 +4,7 @@ import {
   Bell, AlertTriangle, CalendarClock, PhoneMissed,
   FileWarning, Clock, CreditCard, CheckCircle2, ChevronRight, Inbox,
 } from "lucide-react"
+import MarkContactedButton from "@/components/dashboard/MarkContactedButton"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -291,12 +292,9 @@ export default async function NotificationsPage() {
             <div className="space-y-2">
               {items.map(n => {
                 const Icon = NOTIF_ICON[n.notifType] ?? Bell
-                return (
-                  <Link
-                    key={n.id}
-                    href={`/dashboard/tenants/${n.tenantId}`}
-                    className={`flex items-start gap-3.5 p-4 rounded-xl border transition-colors hover:brightness-110 ${cfg.bg} ${cfg.border}`}
-                  >
+                const isNoContact = n.notifType === "no_recent_action"
+                const cardContent = (
+                  <>
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-0.5 bg-white/[0.04] border border-white/[0.07]`}>
                       <Icon size={14} className={cfg.text} />
                     </div>
@@ -316,6 +314,27 @@ export default async function NotificationsPage() {
                         <ChevronRight size={14} className="text-[#374151] shrink-0 mt-1" />
                       </div>
                     </div>
+                  </>
+                )
+                return isNoContact ? (
+                  <div key={n.id} className={`p-4 rounded-xl border ${cfg.bg} ${cfg.border}`}>
+                    <Link
+                      href={`/dashboard/tenants/${n.tenantId}`}
+                      className="flex items-start gap-3.5 hover:brightness-110 transition-colors"
+                    >
+                      {cardContent}
+                    </Link>
+                    <div className="mt-2.5 ml-11">
+                      <MarkContactedButton tenantId={n.tenantId} />
+                    </div>
+                  </div>
+                ) : (
+                  <Link
+                    key={n.id}
+                    href={`/dashboard/tenants/${n.tenantId}`}
+                    className={`flex items-start gap-3.5 p-4 rounded-xl border transition-colors hover:brightness-110 ${cfg.bg} ${cfg.border}`}
+                  >
+                    {cardContent}
                   </Link>
                 )
               })}

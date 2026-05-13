@@ -1,17 +1,22 @@
 import { NextRequest, NextResponse } from "next/server"
 import Stripe from "stripe"
-import Twilio from "twilio"
 import { createClient } from "@/lib/supabase/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
+import { sendTenantSms } from "@/lib/sms"
+
+import { FEE_RATE } from "@/lib/payment-config"
+import { checkRateLimit } from "@/lib/rate-limit"
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!)
-const twilio = Twilio(process.env.TWILIO_ACCOUNT_SID!, process.env.TWILIO_AUTH_TOKEN!)
-const FEE_RATE = 0.005 // 0.5%
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
+
+  if (!checkRateLimit(`payment-link:${user.id}`, 5, 60_000)) {
+    return NextResponse.json({ error: "Too many requests. Wait a minute and try again." }, { status: 429 })
+  }
 
   const { tenantId } = await req.json()
 
@@ -80,11 +85,12 @@ export async function POST(req: NextRequest) {
   // Send SMS to tenant with payment link
   if (tenant.phone && session.url) {
     try {
-      await twilio.messages.create({
-        body: `Hi ${tenant.name}, your ${profile.pm_display_name || "property manager"} has sent you a secure payment link for $${amountDollars.toLocaleString()} due on Unit ${tenant.unit}. Pay now: ${session.url} You may also pay by check — contact your landlord for details. Reply STOP to opt out.`,
-        from: process.env.TWILIO_PHONE_NUMBER!,
-        to: tenant.phone,
-      })
+      await sendTenantSms(
+        supabase,
+        tenant.id,
+        tenant.phone,
+        `Hi ${tenant.name}, your ${profile.pm_display_name || "property manager"} has sent you a secure payment link for $${amountDollars.toLocaleString()} due on Unit ${tenant.unit}. Pay now: ${session.url} Reply STOP to opt out.`
+      )
 
       const svc = createServiceClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,

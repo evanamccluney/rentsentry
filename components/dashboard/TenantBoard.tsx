@@ -13,7 +13,9 @@ import { scoreTenant, type RiskTier } from "@/lib/risk-engine"
 import type { EscalationRules } from "@/lib/escalation-rules"
 import { calculateEconomics } from "@/lib/eviction-economics"
 import AIMessageContent from "./AIMessageContent"
+import SmsSendModal from "./SmsSendModal"
 import TenantFormModal from "./TenantFormModal"
+import EscalationIntakeModal, { type IntakeAnswers } from "./EscalationIntakeModal"
 import SituationIntakeModal from "./SituationIntakeModal"
 import DecisionMathPanel from "./DecisionMathPanel"
 import { STATE_RULES, generatePayOrQuitPDF } from "@/lib/pay-or-quit"
@@ -24,19 +26,20 @@ import { STATE_RULES, generatePayOrQuitPDF } from "@/lib/pay-or-quit"
 const SMS_PREVIEWS: Record<string, (name: string, balance?: number, daysPastDue?: number) => string> = {
   payment_reminder: (name, balance, daysPastDue) =>
     balance && balance > 0
-      ? `Hi ${name}, you have an outstanding balance of $${balance.toLocaleString()}${daysPastDue && daysPastDue > 0 ? ` that is ${daysPastDue} days overdue` : " that is overdue"}. Please arrange payment immediately or contact your property manager.`
-      : `Hi ${name}, this is a reminder that rent is due on the 1st. Please ensure payment is ready. Contact your property manager with any questions.`,
+      ? `Hi ${name}, you have an outstanding balance of $${balance.toLocaleString()}${daysPastDue && daysPastDue > 0 ? ` — ${daysPastDue} days overdue` : " — overdue"}. Please contact your property manager to arrange payment. Reply STOP to opt out.`
+      : `Hi ${name}, your upcoming rent payment is due soon. Please make sure your payment is ready. Contact your property manager with any questions. Reply STOP to opt out.`,
   proactive_reminder: (name) =>
-    `Hi ${name}, rent is due on the 1st. Based on your payment history we wanted to reach out early. Contact your property manager with any questions.`,
-  // card_expiry_alert kept for backward compat with historical interventions
+    `Hi ${name}, just a heads-up — rent is coming due. We're reaching out early based on your payment history. Contact your property manager with any questions. Reply STOP to opt out.`,
   card_expiry_alert: (name) =>
-    `Hi ${name}, your payment method on file may need attention. Please confirm or update it before the 1st to avoid any issues with your tenancy.`,
+    `Hi ${name}, the payment method on your account is expiring soon. Please update it before your next rent payment to avoid a failed charge. Reply STOP to opt out.`,
   split_pay_offer: (name, balance) =>
-    `Hi ${name}, your property manager is offering a flexible split-payment option for your outstanding balance${balance && balance > 0 ? ` of $${balance.toLocaleString()}` : ""}. Reply or call to arrange installments.`,
+    balance && balance > 0
+      ? `Hi ${name}, your property manager is offering to split your $${balance.toLocaleString()} balance into installments. They'll follow up with a payment link shortly. Reply STOP to opt out.`
+      : `Hi ${name}, your property manager is offering to split your next payment into installments. They'll follow up with a payment link shortly. Reply STOP to opt out.`,
   cash_for_keys: (name) =>
-    `Hi ${name}, your property manager has a time-sensitive offer regarding your unit. Please contact them within 5 days to discuss your options.`,
-  legal_packet: (name, balance) =>
-    `Hi ${name}, your account${balance && balance > 0 ? ` has an outstanding balance of $${balance.toLocaleString()} and` : " is significantly overdue and"} legal proceedings are being prepared. Contact your property manager immediately to resolve this.`,
+    `Hi ${name}, your property manager has an important message about your housing situation. Please contact them directly today — this is time-sensitive. Reply STOP to opt out.`,
+  legal_packet: (name) =>
+    `Hi ${name}, your property manager needs to speak with you urgently about your account. Please contact them directly today. Reply STOP to opt out.`,
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -507,7 +510,7 @@ const REVIEW_BUTTON_LABEL: Partial<Record<RiskTier, string>> = {
 
 // Helper line shown under primary button explaining what happens after click
 const AFTER_SEND_LABEL: Partial<Record<RiskTier, string>> = {
-  legal:        "Sent to tenant immediately after your approval",
+  legal:        "Packet prepared for attorney review — nothing sent to tenant yet",
   pay_or_quit:  "Prepared for your review before anything is sent",
   cash_for_keys:"Sent to tenant immediately after your approval",
   payment_plan: "Sent to tenant immediately after your approval",
@@ -660,75 +663,7 @@ function FilterBar({ active, counts, onChange }: {
   )
 }
 
-// ── PreviewModal ──────────────────────────────────────────────────────────────
-
-function PreviewModal({
-  tenant,
-  actionType,
-  onConfirm,
-  onCancel,
-  loading,
-}: {
-  tenant: Tenant
-  actionType: string
-  onConfirm: () => void
-  onCancel: () => void
-  loading: boolean
-}) {
-  const msgFn = SMS_PREVIEWS[actionType]
-  if (!msgFn) return null
-  const msgBody = msgFn(tenant.name, tenant.balance_due, tenant.days_past_due)
-  const hasPhone = !!tenant.phone
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onCancel}>
-      <div className="bg-[#111827] border border-white/10 rounded-2xl w-full max-w-md mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="p-6">
-          <div className="flex items-center justify-between mb-5">
-            <div>
-              <h3 className="text-white font-semibold text-base">Review SMS Before Sending</h3>
-              <p className="text-[#4b5563] text-xs mt-0.5">Prepared by system · approve to send via SMS</p>
-            </div>
-            <button onClick={onCancel} className="text-[#4b5563] hover:text-white transition-colors">
-              <X size={16} />
-            </button>
-          </div>
-
-          <div className="flex gap-3 text-sm items-baseline mb-4">
-            <span className="text-[#4b5563] w-14 shrink-0 text-xs uppercase tracking-wide">To</span>
-            {hasPhone
-              ? <span className="text-white font-mono">{tenant.phone}</span>
-              : <span className="text-orange-400 text-xs">No phone number on file — SMS will not be sent</span>
-            }
-          </div>
-
-          {/* SMS bubble */}
-          <div className="bg-[#0d1117] border border-white/5 rounded-2xl rounded-tl-sm p-4 mb-1">
-            <p className="text-[#d1d5db] text-sm leading-relaxed">{msgBody}</p>
-          </div>
-          <div className="flex justify-between items-center mb-4">
-            <span className="text-[#2e3a50] text-[10px]">SMS · {msgBody.length} chars · 1 segment</span>
-            <span className="text-[#2e3a50] text-[10px]">Sent from RentSentry</span>
-          </div>
-
-          <p className="text-[#374151] text-xs mb-5">Logged to tenant record regardless of delivery</p>
-          <div className="flex gap-3">
-            <button onClick={onCancel} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-[#9ca3af] bg-white/5 hover:bg-white/10 transition-colors">
-              Cancel
-            </button>
-            <button
-              onClick={onConfirm}
-              disabled={loading}
-              className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white bg-blue-500 hover:bg-blue-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              <Send size={13} />
-              {loading ? "Sending…" : "Approve & Send SMS"}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
+// ── PreviewModal replaced by SmsSendModal (see ./SmsSendModal.tsx) ─────────────
 
 // ── MarkPaidModal ─────────────────────────────────────────────────────────────
 
@@ -1291,7 +1226,7 @@ function PayOrQuitModal({
           {/* Payment Plan tab */}
           {(showCfkTab && activeTab === "plan") && (() => {
             const installment = Math.ceil(tenant.balance_due / 2)
-            const planSms = `Hi ${tenant.name}, your property manager would like to work with you on your outstanding balance of $${tenant.balance_due.toLocaleString()}. We can split this into 2 payments of $${installment.toLocaleString()}. Please contact us within 5 days to confirm this arrangement.`
+            const planSms = `Hi ${tenant.name}, your property manager is offering to split your $${tenant.balance_due.toLocaleString()} balance into 2 payments of $${installment.toLocaleString()}. They'll follow up with a payment link to get started. Reply STOP to opt out.`
             return (
               <div>
                 <div className="bg-amber-500/5 border border-amber-500/15 rounded-xl px-4 py-3 mb-4">
@@ -1613,6 +1548,7 @@ function TenantCard({
   onTogglePause,
   onPaymentRecorded,
   onActionExecuted,
+  autoMode,
   escalationRules,
 }: {
   t: Tenant
@@ -1622,6 +1558,7 @@ function TenantCard({
   onTogglePause: () => void
   onPaymentRecorded: () => void
   onActionExecuted: () => void
+  autoMode: boolean
   escalationRules?: EscalationRules
 }) {
   const [loading, setLoading] = useState<string | null>(null)
@@ -1632,6 +1569,8 @@ function TenantCard({
   const [aiOpen, setAiOpen] = useState(false)
   const [cfkOutcomeOpen, setCfkOutcomeOpen] = useState(false)
   const [localCfkOutcome, setLocalCfkOutcome] = useState<CfkOutcomeKey | null>(null)
+  const [intakeOpen, setIntakeOpen] = useState(false)
+  const [pendingTierAction, setPendingTierAction] = useState<string | null>(null)
 
   // Derive CFK outcome state — local override takes priority over DB value
   const cfkOutcomeKey = (localCfkOutcome ?? t.resolution_status ?? null) as CfkOutcomeKey | null
@@ -1682,14 +1621,14 @@ function TenantCard({
     state: t.properties?.state,
   })
 
-  async function trigger(type: string) {
+  async function trigger(type: string, message?: string) {
     setLoading(type)
     setPendingAction(null)
     try {
       const res = await fetch("/api/interventions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tenantId: t.id, type, phone: t.phone, name: t.name, snapshot: buildSnapshot(t) }),
+        body: JSON.stringify({ tenantId: t.id, type, phone: t.phone, name: t.name, snapshot: buildSnapshot(t), message }),
       })
       const data = await res.json()
       if (data.ok) {
@@ -1709,23 +1648,78 @@ function TenantCard({
     }
   }
 
+  const HIGH_STAKES_TIERS = ["pay_or_quit", "cash_for_keys", "legal"]
+
   function requestAction(type: string) {
-    // Pay or Quit gets its own modal (PDF + SMS combined)
+    if (HIGH_STAKES_TIERS.includes(t.tier)) {
+      setPendingTierAction(type)
+      setIntakeOpen(true)
+      return
+    }
+    if (SMS_PREVIEWS[type]) setPendingAction(type)
+    else trigger(type)
+  }
+
+  function proceedAfterIntake(type: string) {
     if (t.tier === "pay_or_quit") { setPayOrQuitOpen(true); return }
     if (SMS_PREVIEWS[type]) setPendingAction(type)
     else trigger(type)
   }
 
+  async function handleIntakeComplete(answers: IntakeAnswers) {
+    setIntakeOpen(false)
+    await fetch("/api/interventions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tenantId: t.id,
+        type: "situation_intake",
+        snapshot: answers,
+        notes: `Contact: ${answers.contact} · Reason: ${answers.reason} · Partial payment: ${answers.partial_payment} · Tenancy: ${answers.tenancy_length}`,
+      }),
+    })
+    if (pendingTierAction) proceedAfterIntake(pendingTierAction)
+    setPendingTierAction(null)
+  }
+
+  function handleIntakeSkip() {
+    setIntakeOpen(false)
+    if (pendingTierAction) proceedAfterIntake(pendingTierAction)
+    setPendingTierAction(null)
+  }
+
   // Next action text comes from effectiveSystemMsg (optimistic-aware)
   const nextActionText = effectiveSystemMsg.primary
 
+  const tenancyLength = (() => {
+    const start = t.lease_start ? new Date(t.lease_start + "T00:00:00") : null
+    if (!start) return "Unknown"
+    const months = Math.floor((Date.now() - start.getTime()) / (1000 * 60 * 60 * 24 * 30))
+    if (months < 1) return "Less than 1 month"
+    if (months < 12) return `${months} month${months !== 1 ? "s" : ""}`
+    const years = Math.floor(months / 12)
+    const rem = months % 12
+    return rem > 0 ? `${years}yr ${rem}mo` : `${years} year${years !== 1 ? "s" : ""}`
+  })()
+
   return (
     <>
+      {intakeOpen && (
+        <EscalationIntakeModal
+          tenantName={t.name}
+          tenancyLength={tenancyLength}
+          tier={t.tier}
+          onComplete={handleIntakeComplete}
+          onSkip={handleIntakeSkip}
+          onClose={() => { setIntakeOpen(false); setPendingTierAction(null) }}
+        />
+      )}
       {pendingAction && (
-        <PreviewModal
-          tenant={t}
+        <SmsSendModal
+          tenantId={t.id}
           actionType={pendingAction}
-          onConfirm={() => trigger(pendingAction)}
+          tenant={t}
+          onConfirm={(msg) => trigger(pendingAction, msg)}
           onCancel={() => setPendingAction(null)}
           loading={loading !== null}
         />
@@ -1977,9 +1971,11 @@ function TenantCard({
         </div>
 
         {/* After-send helper — only shown for needs_review before any click */}
-        {canReviewSend && effectiveStatus === "needs_review" && AFTER_SEND_LABEL[t.tier] && (
+        {canReviewSend && effectiveStatus === "needs_review" && (
           <p className="text-[#374151] text-[10px] mt-2.5 text-center">
-            {AFTER_SEND_LABEL[t.tier]}
+            {!autoMode && (t.tier === "watch" || t.tier === "reminder")
+              ? "Nothing will send automatically — you approve each action"
+              : AFTER_SEND_LABEL[t.tier]}
           </p>
         )}
 
@@ -2330,6 +2326,7 @@ function Section({
                     onTogglePause={() => onTogglePause(t.id)}
                     onPaymentRecorded={onPaymentRecorded}
                     onActionExecuted={onActionExecuted}
+                    autoMode={autoMode}
                     escalationRules={escalationRules}
                   />
                 ))}
@@ -2349,6 +2346,7 @@ function Section({
               onTogglePause={() => onTogglePause(t.id)}
               onPaymentRecorded={onPaymentRecorded}
               onActionExecuted={onActionExecuted}
+              autoMode={autoMode}
               escalationRules={escalationRules}
             />
           ))}
@@ -2703,7 +2701,7 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
                     <td className="px-5 py-3 text-[#6b7280] text-xs">{t.properties?.name ?? "—"}</td>
                     <td className="px-5 py-3 text-white tabular-nums">${(t.rent_amount ?? 0).toLocaleString()}</td>
                     <td className="px-5 py-3 text-[#4b5563] text-xs">
-                      {t.last_payment_date ? new Date(t.last_payment_date).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"}
+                      {t.last_payment_date ? new Date(t.last_payment_date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"}
                     </td>
                     <td className="px-5 py-3 text-right">
                       <Link href={`/dashboard/tenants/${t.id}`} className="text-[#4b5563] hover:text-white text-xs transition-colors">

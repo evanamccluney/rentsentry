@@ -15,6 +15,7 @@ export interface TenantImportRow {
   previous_delinquency?: boolean
   late_payment_count?: number
   days_late_avg?: number
+  last_payment_date?: string
   notes?: string
   _errors?: string[]
 }
@@ -102,6 +103,10 @@ const SHARED_COLUMNS: Record<string, keyof TenantImportRow> = {
   "avg days late":      "days_late_avg",
   "average days late":  "days_late_avg",
   "days late avg":      "days_late_avg",
+  "last payment date":  "last_payment_date",
+  "last paid date":     "last_payment_date",
+  "last paid":          "last_payment_date",
+  "last payment":       "last_payment_date",
   "notes":              "notes",
   "comments":           "notes",
   "memo":               "notes",
@@ -255,7 +260,7 @@ export const PLATFORM_CONFIGS: Record<Platform, PlatformConfig> = {
     reportsNeeded: [
       { name: "RentSentry Template (CSV)", required: true, note: "Download the template and fill it in" },
     ],
-    autoFills: ["name", "unit", "email", "phone", "rent_amount", "balance_due", "lease_start", "lease_end", "rent_due_day", "payment_method", "card_expiry", "previous_delinquency", "late_payment_count", "days_late_avg", "notes"],
+    autoFills: ["name", "unit", "email", "phone", "rent_amount", "balance_due", "lease_start", "lease_end", "rent_due_day", "last_payment_date", "payment_method", "card_expiry", "previous_delinquency", "late_payment_count", "days_late_avg", "notes"],
     manualFields: [],
     tips: [
       "The template includes all RentSentry fields including card expiry and late payment history — fill in as much as you have.",
@@ -424,7 +429,8 @@ export function convertRow(
         break
       }
       case "lease_start":
-      case "lease_end": {
+      case "lease_end":
+      case "last_payment_date": {
         const d = parseDate(val)
         if (d) r[field] = d
         break
@@ -447,13 +453,13 @@ export function generateTemplateCSV(): string {
   const headers = [
     "Tenant Name*", "Unit*", "Email", "Phone",
     "Monthly Rent", "Balance Due", "Lease Start", "Lease End",
-    "Rent Due Day", "Payment Method", "Card Expiry",
+    "Rent Due Day", "Last Payment Date", "Payment Method", "Card Expiry",
     "Previous Delinquency", "Late Payment Count", "Avg Days Late", "Notes",
   ]
   const example = [
     "Jane Smith", "2B", "jane@example.com", "555-867-5309",
     "1500", "0", "01/01/2024", "12/31/2024",
-    "1", "ach", "",
+    "1", "03/01/2025", "ach", "",
     "No", "0", "0", "",
   ]
   return [headers.join(","), example.join(",")].join("\n")

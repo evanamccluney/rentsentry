@@ -1,35 +1,29 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { revalidateTag } from "next/cache"
-import twilio from "twilio"
 import { normalizePhone } from "@/lib/phone"
 import { sendTenantEmail } from "@/lib/email"
-
-const twilioClient = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN,
-)
-const FROM_NUMBER = process.env.TWILIO_PHONE_NUMBER!
+import { sendTenantSms } from "@/lib/sms"
 
 // SMS messages — concise, single segment (<160 chars each)
 const SMS_MESSAGES: Record<string, (name: string) => string> = {
   payment_reminder: (name) =>
-    `Hi ${name}, this is a reminder that rent is due on the 1st. Please ensure payment is ready. Contact your property manager with any questions.`,
+    `Hi ${name}, your upcoming rent payment is due soon. Please make sure your payment is ready. Contact your property manager with any questions. Reply STOP to opt out.`,
 
   proactive_reminder: (name) =>
-    `Hi ${name}, rent is due on the 1st. Based on your payment history we wanted to reach out early. Contact your property manager with any questions.`,
+    `Hi ${name}, just a heads-up — rent is coming due. We're reaching out early based on your payment history. Contact your property manager with any questions. Reply STOP to opt out.`,
 
   card_expiry_alert: (name) =>
-    `Hi ${name}, your payment method on file may need attention. Please confirm or update it before the 1st to avoid any issues with your tenancy.`,
+    `Hi ${name}, the payment method on your account is expiring soon. Please update it before your next rent payment to avoid a failed charge. Reply STOP to opt out.`,
 
   split_pay_offer: (name) =>
-    `Hi ${name}, your property manager is offering a flexible split-payment option this month. Reply or call to arrange installments before the 1st.`,
+    `Hi ${name}, your property manager is offering to split your next payment into installments. They'll follow up with a payment link shortly. Reply STOP to opt out.`,
 
   cash_for_keys: (name) =>
-    `Hi ${name}, your property manager has a time-sensitive offer regarding your unit. Please contact them within 5 days to discuss your options.`,
+    `Hi ${name}, your property manager has an important message about your housing situation. Please contact them directly today — this is time-sensitive. Reply STOP to opt out.`,
 
   legal_packet: (name) =>
-    `Hi ${name}, your account is significantly overdue and legal proceedings are being prepared. Contact your property manager immediately to resolve this.`,
+    `Hi ${name}, your property manager needs to speak with you urgently about your account. Please contact them directly today. Reply STOP to opt out.`,
 }
 
 const ACTION_LABELS: Record<string, string> = {
@@ -47,7 +41,7 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
 
-  const { tenantId, type, phone, name, snapshot, message } = await req.json()
+  const { tenantId, type, phone, name, snapshot, message, notes } = await req.json()
 
   if (!tenantId || !type) return NextResponse.json({ error: "Missing fields" }, { status: 400 })
 
@@ -58,6 +52,7 @@ export async function POST(req: NextRequest) {
     type,
     status: "sent",
     sent_at: new Date().toISOString(),
+    notes: notes ?? null,
     snapshot: snapshot ?? null,
   })
 
@@ -66,15 +61,7 @@ export async function POST(req: NextRequest) {
   if (normalizedPhone) {
     const body = message?.trim() || (SMS_MESSAGES[type] ? SMS_MESSAGES[type](name || "Resident") : null)
     if (body) {
-      try {
-        await twilioClient.messages.create({
-          from: FROM_NUMBER,
-          to: normalizedPhone,
-          body,
-        })
-      } catch (err: any) {
-        console.error("Twilio send error:", err?.message)
-      }
+      await sendTenantSms(supabase, tenantId, normalizedPhone, body)
     }
   } else {
     // No phone — try email fallback
@@ -88,7 +75,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  revalidateTag(`tenant-data-${user.id}`)
+  revalidateTag(`tenant-data-${user.id}`, 'max')
 
   return NextResponse.json({ ok: true, message: ACTION_LABELS[type] || "Action logged." })
 }

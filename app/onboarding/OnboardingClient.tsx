@@ -41,6 +41,9 @@ export default function OnboardingClient({ embedded = false }: { embedded?: bool
   const [propertyAddress, setPropertyAddress] = useState("")
   const [propertyState, setPropertyState] = useState("")
   const [rules, setRules] = useState<EscalationRules>(() => rulesForPreset("professional"))
+  const [autoPaymentPlanOffers, setAutoPaymentPlanOffers] = useState(true)
+  const [lateFeePercent, setLateFeePercent] = useState("5")
+  const [lateFeeDay, setLateFeeDay] = useState(5)
 
   function applyPreset(preset: EscalationPreset) {
     setRules(preset === "custom" ? normalizeEscalationRules({ ...rules, preset: "custom" }) : rulesForPreset(preset))
@@ -96,6 +99,10 @@ export default function OnboardingClient({ embedded = false }: { embedded?: bool
     const { error } = await supabase.from("profiles").upsert({
       id: user.id,
       ...escalationRulesToProfileUpdate(rules),
+      auto_mode: false,
+      auto_payment_plan_offers: autoPaymentPlanOffers,
+      late_fee_percent: parseFloat(lateFeePercent) || 5,
+      late_fee_day: Math.min(30, Math.max(0, lateFeeDay)),
       updated_at: new Date().toISOString(),
     })
     if (error) { toast.error("Could not save escalation rules."); setLoading(false); return }
@@ -274,6 +281,63 @@ export default function OnboardingClient({ embedded = false }: { embedded?: bool
                 RentSentry chooses the timing automatically. You can fine-tune it later in Settings.
               </div>
             </div>
+
+            <div className="mb-4 rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
+              <div className="flex items-start justify-between gap-4 mb-2">
+                <div className="flex gap-3">
+                  <Bell size={15} className="text-amber-400 mt-0.5 shrink-0" />
+                  <div>
+                    <div className="text-white text-sm font-semibold">Auto-send payment plan offers</div>
+                    <p className="text-[#4b5563] text-xs leading-relaxed">
+                      When a tenant with a late history is 3–7 days from rent due, automatically text them a split-pay offer with a Stripe payment link — no action needed from you.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAutoPaymentPlanOffers(v => !v)}
+                  className={`relative shrink-0 w-11 h-6 rounded-full transition-colors ${autoPaymentPlanOffers ? "bg-amber-500" : "bg-white/10"}`}
+                  aria-label="Toggle auto payment plan offers"
+                >
+                  <span className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${autoPaymentPlanOffers ? "left-6" : "left-1"}`} />
+                </button>
+              </div>
+              <div className="text-[#374151] text-xs">
+                {autoPaymentPlanOffers
+                  ? "RentSentry will send offers automatically. You'll see them logged in the activity feed."
+                  : "You'll see payment plan suggestions in your dashboard and send them yourself."}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 mb-4">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-white text-sm font-semibold">Late fee</span>
+                <span className="text-[#4b5563] text-xs">— must match your lease</span>
+              </div>
+              <div className="flex flex-wrap gap-4">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number" min="0" max="50" step="0.5"
+                    value={lateFeePercent}
+                    onChange={e => setLateFeePercent(e.target.value)}
+                    className="w-20 bg-[#0d1117] border border-white/10 text-white text-sm rounded-xl px-3 py-2 focus:outline-none focus:border-white/20 text-center"
+                  />
+                  <span className="text-[#6b7280] text-xs">% of monthly rent</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[#6b7280] text-xs">kicks in after</span>
+                  <input
+                    type="number" min="0" max="30"
+                    value={lateFeeDay}
+                    onChange={e => setLateFeeDay(Number(e.target.value))}
+                    className="w-16 bg-[#0d1117] border border-white/10 text-white text-sm rounded-xl px-3 py-2 focus:outline-none focus:border-white/20 text-center"
+                  />
+                  <span className="text-[#6b7280] text-xs">days past due</span>
+                </div>
+              </div>
+              <p className="text-[#374151] text-[11px] mt-2">Automated reminders will tell tenants to pay before Day {lateFeeDay} to avoid the late fee.</p>
+            </div>
+
             <div className="grid grid-cols-2 gap-3 mb-4">
               <label className="block">
                 <span className="text-[#6b7280] text-xs uppercase tracking-wide block mb-1.5">Reminder day</span>

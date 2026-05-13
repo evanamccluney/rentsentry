@@ -76,13 +76,15 @@ function estimateDaysPastDue(lastPaymentDate?: string, rentDueDay = 1): number {
 
 export function scoreTenant(t: TenantRiskInput): RiskResult {
   const {
-    balance_due, rent_amount, late_payment_count,
+    balance_due: _rawBalance, rent_amount, late_payment_count,
     previous_delinquency, days_late_avg, card_expiry,
     payment_method, last_payment_date, rent_due_day,
     days_until_due, escalation_rules,
   } = t
 
   const rules = normalizeEscalationRules(escalation_rules)
+  // Sub-10¢ remainders are treated as cleared — prevents installment rounding from triggering false delinquency
+  const balance_due = _rawBalance > 0 && _rawBalance < 0.10 ? 0 : _rawBalance
   const monthsOwed   = rent_amount > 0 ? balance_due / rent_amount : 0
   const daysPastDue  = estimateDaysPastDue(last_payment_date, rent_due_day ?? 1)
   const lateFee      = balance_due > 0 && daysPastDue > 5 ? Math.round(rent_amount * 0.05) : 0

@@ -4,6 +4,10 @@ import { scoreTenant } from "@/lib/risk-engine"
 import { profileToEscalationRules } from "@/lib/escalation-rules"
 import Link from "next/link"
 import { ArrowRight, TrendingUp, DollarSign, Users, AlertTriangle, CheckCircle2, Clock, RefreshCw } from "lucide-react"
+import SetupChecklist from "@/components/dashboard/SetupChecklist"
+import TodayBriefing from "@/components/dashboard/TodayBriefing"
+import CashFlowForecast from "@/components/dashboard/CashFlowForecast"
+import AutomationActivationBanner from "@/components/dashboard/AutomationActivationBanner"
 
 const TIER_COLORS: Record<string, string> = {
   legal: "bg-red-500",
@@ -50,11 +54,23 @@ function daysUntil(iso: string) {
   return Math.ceil((new Date(iso).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
 }
 
+function daysUntilDue(rentDueDay: number): number {
+  const now = new Date()
+  const thisMonth = new Date(now.getFullYear(), now.getMonth(), rentDueDay)
+  const next = thisMonth > now ? thisMonth : new Date(now.getFullYear(), now.getMonth() + 1, rentDueDay)
+  return Math.ceil((next.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+}
+
 export default async function DashboardPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  const [rawTenants, profile, recentActivity] = await Promise.all([
+  const AUTO_INTERVENTION_TYPES = [
+    "proactive_reminder", "pre_due_urgent",
+    "pre_due_delinquent_warning", "pre_due_installment_offer", "payment_method_alert",
+  ]
+
+  const [rawTenants, profile, recentActivity, { count: propertyCount }, { data: recentAutoInterventions }] = await Promise.all([
     getCachedTenants(user!.id),
     getCachedProfile(user!.id),
     supabase
@@ -64,7 +80,26 @@ export default async function DashboardPage() {
       .order("sent_at", { ascending: false })
       .limit(8)
       .then(r => r.data),
+    supabase
+      .from("properties")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user!.id),
+    supabase
+      .from("interventions")
+      .select("tenant_id, type, sent_at")
+      .eq("user_id", user!.id)
+      .in("type", AUTO_INTERVENTION_TYPES)
+      .gte("sent_at", new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString())
+      .order("sent_at", { ascending: false }),
   ])
+
+  const lastAutoActionByTenant: Record<string, { type: string; daysAgo: number }> = {}
+  for (const i of recentAutoInterventions ?? []) {
+    if (!lastAutoActionByTenant[i.tenant_id]) {
+      const daysAgo = Math.floor((Date.now() - new Date(i.sent_at).getTime()) / (1000 * 60 * 60 * 24))
+      lastAutoActionByTenant[i.tenant_id] = { type: i.type, daysAgo }
+    }
+  }
   const escalationRules = profileToEscalationRules(profile)
 
   const tenants = (rawTenants || []).map(t => ({
@@ -79,6 +114,7 @@ export default async function DashboardPage() {
       rent_amount: t.rent_amount ?? 0,
       last_payment_date: t.last_payment_date ?? undefined,
       rent_due_day: t.rent_due_day ?? 1,
+      days_until_due: daysUntilDue(t.rent_due_day ?? 1),
       escalation_rules: escalationRules,
     }),
   }))
@@ -115,6 +151,48 @@ export default async function DashboardPage() {
   ) as Record<string, number>
 
   const atRisk = ACTION_ORDER.reduce((s, t) => s + (tierCounts[t] || 0), 0)
+
+  const p = profile as Record<string, unknown> | null
+  const checklistSteps = [
+    {
+      label: "Add a property",
+      description: "Create your first property so tenants can be organized by address.",
+      done: (propertyCount ?? 0) > 0,
+      href: "/dashboard/properties",
+      cta: "Add property",
+    },
+    {
+      label: "Upload your rent roll",
+      description: "Import your tenants via CSV, or add them one at a time.",
+      done: total > 0,
+      href: "/dashboard/upload",
+      cta: "Upload CSV",
+      altHref: "/dashboard/tenants",
+      altCta: "Add manually",
+    },
+    {
+      label: "Connect Stripe",
+      description: "Required to collect payments and send payment links to tenants.",
+      done: !!(p?.stripe_account_id),
+      href: "/dashboard/settings",
+      cta: "Connect",
+    },
+    {
+      label: "Set your automation rules",
+      description: "Choose when to send reminders and when to escalate — takes 30 seconds.",
+      done: !!(p?.escalation_preset),
+      href: "/dashboard/settings",
+      cta: "Configure",
+    },
+    {
+      label: "Add your phone number",
+      description: "So tenants know who to call and SMS replies reach you.",
+      done: !!(p?.pm_phone),
+      href: "/dashboard/settings",
+      cta: "Add number",
+    },
+  ]
+  const completedCount = checklistSteps.filter(s => s.done).length
 
   const now = new Date()
   const in60 = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000)
@@ -161,6 +239,17 @@ export default async function DashboardPage() {
           }
         </p>
       </div>
+
+      <SetupChecklist steps={checklistSteps} completedCount={completedCount} />
+
+      {!profile?.auto_mode && <AutomationActivationBanner />}
+
+      <TodayBriefing tenants={tenants} lastAutoActions={lastAutoActionByTenant} />
+
+      <CashFlowForecast
+        tenants={tenants.map(t => ({ rent_amount: t.rent_amount || 0, balance_due: t.balance_due || 0, tier: t.tier }))}
+        monthLabel={new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+      />
 
       {/* Stale data banner */}
       {dataIsStale && (

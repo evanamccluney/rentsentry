@@ -1,21 +1,15 @@
 "use client"
 import { useState } from "react"
 import { toast } from "sonner"
-import { AlertTriangle, HandCoins, Scale, X, Send, TrendingDown } from "lucide-react"
+import { AlertTriangle, HandCoins, Scale, TrendingDown } from "lucide-react"
 import type { EconomicsResult } from "@/lib/eviction-economics"
 import GenerateCFKLetter from "@/components/dashboard/GenerateCFKLetter"
 import CalculationExplainer from "@/components/dashboard/CalculationExplainer"
+import SmsSendModal from "@/components/dashboard/SmsSendModal"
 
 function moneyRange(low: number, high: number) {
   if (Math.round(low) === Math.round(high)) return `$${Math.round(low).toLocaleString()}`
   return `$${Math.round(low).toLocaleString()}-$${Math.round(high).toLocaleString()}`
-}
-
-const SMS_PREVIEWS: Record<string, (name: string) => string> = {
-  cash_for_keys: (name) =>
-    `Hi ${name}, your property manager has a time-sensitive offer regarding your unit. Please contact them within 5 days to discuss your options.`,
-  legal_packet: (name) =>
-    `Hi ${name}, your account is significantly overdue and legal proceedings are being prepared. Contact your property manager immediately to resolve this.`,
 }
 
 interface Props {
@@ -72,7 +66,7 @@ export default function EscalationDecisionBanner({ tenant, econ, propertyState }
     }
   }
 
-  async function execute(type: string) {
+  async function execute(type: string, messageBody: string) {
     setLoading(true)
     try {
       const res = await fetch("/api/interventions", {
@@ -84,6 +78,7 @@ export default function EscalationDecisionBanner({ tenant, econ, propertyState }
           phone: tenant.phone,
           name: tenant.name,
           snapshot: buildSnapshot(type),
+          message: messageBody,
         }),
       })
       const data = await res.json()
@@ -101,59 +96,17 @@ export default function EscalationDecisionBanner({ tenant, econ, propertyState }
     }
   }
 
-  const hasPhone = !!tenant.phone
-  const msgFn = pendingAction ? SMS_PREVIEWS[pendingAction] : null
-  const msgBody = msgFn ? msgFn(tenant.name) : ""
-
   return (
     <>
-      {pendingAction && msgFn && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => setPendingAction(null)}>
-          <div className="bg-[#111827] border border-white/10 rounded-2xl w-full max-w-md mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="p-6">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-white font-semibold text-base">Review SMS Before Sending</h3>
-                <button onClick={() => setPendingAction(null)} className="text-[#4b5563] hover:text-white transition-colors">
-                  <X size={16} />
-                </button>
-              </div>
-              <p className="text-[#4b5563] text-xs mb-5">Prepared by system - snapshot saved to history</p>
-
-              <div className="flex gap-3 text-sm items-baseline mb-4">
-                <span className="text-[#4b5563] w-14 shrink-0 text-xs uppercase tracking-wide">To</span>
-                {hasPhone
-                  ? <span className="text-white font-mono">{tenant.phone}</span>
-                  : <span className="text-orange-400 text-xs">No phone number on file - action will be logged only</span>
-                }
-              </div>
-
-              <div className="bg-[#0d1117] border border-white/5 rounded-2xl rounded-tl-sm p-4 mb-1">
-                <p className="text-[#d1d5db] text-sm leading-relaxed">{msgBody}</p>
-              </div>
-              <div className="flex justify-between items-center mb-4">
-                <span className="text-[#2e3a50] text-[10px]">SMS - {msgBody.length} chars - 1 segment</span>
-                <span className="text-[#2e3a50] text-[10px]">Sent from RentSentry</span>
-              </div>
-
-              <p className="text-[#374151] text-xs mb-5">
-                Logged permanently to this tenant&apos;s history regardless of delivery
-              </p>
-              <div className="flex gap-3">
-                <button onClick={() => setPendingAction(null)} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-[#9ca3af] bg-white/5 hover:bg-white/10 transition-colors">
-                  Cancel
-                </button>
-                <button
-                  onClick={() => execute(pendingAction)}
-                  disabled={loading}
-                  className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white bg-blue-500 hover:bg-blue-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  <Send size={13} />
-                  {loading ? "Sending..." : "Approve & Send SMS"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {pendingAction && (
+        <SmsSendModal
+          tenantId={tenant.id}
+          actionType={pendingAction}
+          tenant={tenant}
+          onConfirm={(msg) => execute(pendingAction, msg)}
+          onCancel={() => setPendingAction(null)}
+          loading={loading}
+        />
       )}
 
       <div className="bg-red-500/5 border border-red-500/25 rounded-2xl p-5 mb-5">

@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation"
 import { CalendarClock, X } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
+import { FEE_RATE } from "@/lib/payment-config"
 
 function addDays(days: number): string {
   const d = new Date()
@@ -34,8 +35,6 @@ export default function PaymentPlanButton({
   const [loading, setLoading] = useState(false)
 
   if (!stripeConnected || balanceDue <= 0) return null
-
-  const FEE_RATE = 0.005
 
   function getInstallments() {
     const gapDays = frequency === "biweekly" ? 14 : 30

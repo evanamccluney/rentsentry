@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
 import Stripe from "stripe"
-import Twilio from "twilio"
 import { createClient } from "@/lib/supabase/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
+import { sendTenantSms } from "@/lib/sms"
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!)
-const twilio = Twilio(process.env.TWILIO_ACCOUNT_SID!, process.env.TWILIO_AUTH_TOKEN!)
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
@@ -69,15 +68,12 @@ export async function POST(req: NextRequest) {
 
   // SMS tenant with setup link
   if (tenant.phone && session.url) {
-    try {
-      await twilio.messages.create({
-        body: `Hi ${tenant.name}, your ${profile?.pm_display_name || "property manager"} has set up a payment plan for Unit ${tenant.unit}. Link your bank account for automatic payments (no card fees): ${session.url} Reply STOP to opt out.`,
-        from: process.env.TWILIO_PHONE_NUMBER!,
-        to: tenant.phone,
-      })
-    } catch {
-      // SMS failure is not fatal
-    }
+    await sendTenantSms(
+      supabase,
+      tenant.id,
+      tenant.phone,
+      `Hi ${tenant.name}, your ${profile?.pm_display_name || "property manager"} has set up a payment plan for Unit ${tenant.unit}. Link your bank account for automatic payments (no card fees): ${session.url} Reply STOP to opt out.`
+    )
   }
 
   return NextResponse.json({ url: session.url, success: true })

@@ -70,7 +70,7 @@ export default async function OfferPage({ params }: { params: Promise<{ token: s
     )
   }
 
-  const FEE_RATE = 0.005
+  const { FEE_RATE } = await import("@/lib/payment-config")
 
   return (
     <main className="min-h-screen bg-[#0a0e1a] flex items-center justify-center px-6 py-12">

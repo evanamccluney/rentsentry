@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
 import Stripe from "stripe"
-import Twilio from "twilio"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
+import { sendTenantSms } from "@/lib/sms"
+
+import { FEE_RATE } from "@/lib/payment-config"
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!)
-const twilio = Twilio(process.env.TWILIO_ACCOUNT_SID!, process.env.TWILIO_AUTH_TOKEN!)
-const FEE_RATE = 0.005
 
 export async function POST(req: NextRequest) {
   const { token } = await req.json()
@@ -149,11 +149,12 @@ export async function POST(req: NextRequest) {
         cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/pay/cancelled`,
       })
       if (setupSession.url) {
-        await twilio.messages.create({
-          body: `Hi ${tenant.name}, also save your bank account for automatic future payments: ${setupSession.url} Reply STOP to opt out.`,
-          from: process.env.TWILIO_PHONE_NUMBER!,
-          to: tenant.phone,
-        })
+        await sendTenantSms(
+          supabase,
+          tenant.id,
+          tenant.phone,
+          `Hi ${tenant.name}, one more step — link your bank account to activate autopay for your payment plan: ${setupSession.url} Reply STOP to opt out.`
+        )
       }
     } catch {}
   }

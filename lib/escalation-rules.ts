@@ -75,13 +75,18 @@ export function normalizeEscalationRules(input?: RulesInput): EscalationRules {
   const preset = normalizePreset(input?.preset)
   const base = preset === "custom" ? PROFESSIONAL_DEFAULT_RULES : rulesForPreset(preset)
 
+  const paymentPlanDay = clampDay(input?.paymentPlanDay, base.paymentPlanDay)
+  const payOrQuitDay = Math.max(paymentPlanDay, clampDay(input?.payOrQuitDay, base.payOrQuitDay))
+  const cfkReviewDay = Math.max(payOrQuitDay, clampDay(input?.cfkReviewDay, base.cfkReviewDay))
+  const attorneyReviewDay = Math.max(cfkReviewDay, clampDay(input?.attorneyReviewDay, base.attorneyReviewDay))
+
   return {
     preset,
     reminderDay: clampDay(input?.reminderDay, base.reminderDay),
-    paymentPlanDay: clampDay(input?.paymentPlanDay, base.paymentPlanDay),
-    payOrQuitDay: clampDay(input?.payOrQuitDay, base.payOrQuitDay),
-    cfkReviewDay: clampDay(input?.cfkReviewDay, base.cfkReviewDay),
-    attorneyReviewDay: clampDay(input?.attorneyReviewDay, base.attorneyReviewDay),
+    paymentPlanDay,
+    payOrQuitDay,
+    cfkReviewDay,
+    attorneyReviewDay,
     preDueRiskOutreachEnabled: typeof input?.preDueRiskOutreachEnabled === "boolean" ? input.preDueRiskOutreachEnabled : base.preDueRiskOutreachEnabled,
     preDueRiskReviewDaysBeforeDue: clampDay(input?.preDueRiskReviewDaysBeforeDue, base.preDueRiskReviewDaysBeforeDue),
     repeatOffenderAcceleratorDays: clampDay(input?.repeatOffenderAcceleratorDays, base.repeatOffenderAcceleratorDays),

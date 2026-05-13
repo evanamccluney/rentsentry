@@ -47,6 +47,22 @@ export default function TenantFormModal({ mode, properties, initial, onClose }: 
   const router = useRouter()
   const [form, setForm] = useState<TenantData>({ ...EMPTY, ...initial })
   const [saving, setSaving] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
+  async function handleDelete() {
+    if (!confirmDelete) { setConfirmDelete(true); return }
+    setSaving(true)
+    const res = await fetch(`/api/tenants/${initial!.id!}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "deleted" }),
+    })
+    if (!res.ok) { toast.error("Failed to delete tenant."); setSaving(false); return }
+    toast.success("Tenant removed.")
+    setSaving(false)
+    onClose()
+    router.refresh()
+  }
 
   function set(k: keyof TenantData, v: string | boolean) {
     setForm(f => ({ ...f, [k]: v }))
@@ -85,12 +101,30 @@ export default function TenantFormModal({ mode, properties, initial, onClose }: 
     }
 
     if (mode === "add") {
-      const { error } = await supabase.from("tenants").insert(payload)
-      if (error) { toast.error(error.message); setSaving(false); return }
+      const res = await fetch("/api/tenants", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) {
+        const { error } = await res.json().catch(() => ({ error: "Failed to add tenant" }))
+        toast.error(error ?? "Failed to add tenant")
+        setSaving(false)
+        return
+      }
       toast.success(`${form.name} added.`)
     } else {
-      const { error } = await supabase.from("tenants").update(payload).eq("id", initial!.id!)
-      if (error) { toast.error(error.message); setSaving(false); return }
+      const res = await fetch(`/api/tenants/${initial!.id!}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) {
+        const { error } = await res.json().catch(() => ({ error: "Update failed" }))
+        toast.error(error ?? "Update failed")
+        setSaving(false)
+        return
+      }
       toast.success("Tenant updated.")
     }
 
@@ -197,6 +231,16 @@ export default function TenantFormModal({ mode, properties, initial, onClose }: 
           </div>
 
           <div className="flex gap-3 p-6 pt-0">
+            {mode === "edit" ? (
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={saving}
+                className={`py-2.5 px-4 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50 ${confirmDelete ? "bg-red-500 hover:bg-red-600 text-white" : "bg-white/5 hover:bg-white/10 text-red-400"}`}
+              >
+                {confirmDelete ? "Confirm delete" : "Delete"}
+              </button>
+            ) : null}
             <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-[#9ca3af] bg-white/5 hover:bg-white/10 transition-colors">
               Cancel
             </button>

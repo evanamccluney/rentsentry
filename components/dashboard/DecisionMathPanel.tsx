@@ -101,7 +101,7 @@ export default function DecisionMathPanel({
             <div>
               <div className="text-white text-sm font-semibold">Why this action</div>
               <div className="text-[#6b7280] text-xs mt-0.5">
-                {math.primaryTrigger} · rent due day {math.rentDueDay} · grace {math.leaseGraceDays}d · {math.rentCycleStage}
+                {math.primaryTrigger} · rent due day {math.rentDueDay} · grace {math.leaseGraceDays}d{math.rentCycleStage !== math.primaryTrigger && !math.primaryTrigger.includes("rent cycles") ? ` · ${math.rentCycleStage}` : ""}
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">

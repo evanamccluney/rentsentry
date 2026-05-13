@@ -98,7 +98,7 @@ async function recentlySent(
 async function sendAndLog(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: any,
-  tenant: { id: string; user_id: string; name: string; phone: string | null; email?: string | null },
+  tenant: { id: string; user_id: string; name: string; phone: string | null; email?: string | null; sms_opted_out?: boolean | null },
   type: string,
   smsBody: string,
   snapshot: object,
@@ -107,7 +107,7 @@ async function sendAndLog(
 ) {
   if (autoMode) {
     try {
-      if (tenant.phone) {
+      if (tenant.phone && !tenant.sms_opted_out) {
         await twilioClient.messages.create({
           from: FROM_NUMBER,
           to: tenant.phone,
@@ -164,6 +164,7 @@ export async function GET(req: NextRequest) {
       balance_due, rent_amount, rent_due_day,
       days_late_avg, late_payment_count,
       previous_delinquency, last_payment_date,
+      sms_opted_out,
       properties(name)
     `)
     .eq("status", "active")
@@ -178,11 +179,14 @@ export async function GET(req: NextRequest) {
   const userIds = [...new Set(tenants.map((t: { user_id: string }) => t.user_id))]
   const { data: profiles } = await supabase
     .from("profiles")
-    .select("id, auto_mode, pm_phone, pm_alerts_enabled, escalation_preset, reminder_day, payment_plan_day, pay_or_quit_day, cfk_review_day, attorney_review_day, repeat_offender_accelerator_days, pre_due_risk_outreach_enabled, pre_due_risk_review_days_before_due, require_attorney_before_notice, payment_plan_before_notice, custom_escalation_notes, stripe_account_id")
+    .select("id, auto_mode, auto_payment_plan_offers, pm_phone, pm_alerts_enabled, escalation_preset, reminder_day, payment_plan_day, pay_or_quit_day, cfk_review_day, attorney_review_day, repeat_offender_accelerator_days, pre_due_risk_outreach_enabled, pre_due_risk_review_days_before_due, require_attorney_before_notice, payment_plan_before_notice, custom_escalation_notes, stripe_account_id")
     .in("id", userIds)
 
   const autoModeByUser = new Map<string, boolean>(
     (profiles ?? []).map((p: { id: string; auto_mode: boolean | null }) => [p.id, p.auto_mode ?? false])
+  )
+  const autoPaymentPlanOffersByUser = new Map<string, boolean>(
+    (profiles ?? []).map((p: { id: string; auto_payment_plan_offers?: boolean | null }) => [p.id, p.auto_payment_plan_offers ?? true])
   )
   const rulesByUser = new Map<string, EscalationRules>(
     (profiles ?? []).map((p: { id: string } & Record<string, unknown>) => [p.id, profileToEscalationRules(p)])
@@ -274,6 +278,7 @@ export async function GET(req: NextRequest) {
       rent_amount: t.rent_amount ?? 0,
       last_payment_date: t.last_payment_date ?? undefined,
       rent_due_day: t.rent_due_day ?? 1,
+      days_until_due: untilDue,
       escalation_rules: rulesByUser.get(t.user_id),
     })
 
@@ -403,8 +408,8 @@ export async function GET(req: NextRequest) {
         results.skipped_dedup++
       } else {
         const urgentMsg = untilDue === 0
-          ? `Hi ${t.name}, rent is due TODAY. Please submit your payment as soon as possible to avoid a late fee. Contact your property manager immediately if you need assistance. Reply STOP to opt out.`
-          : `Hi ${t.name}, rent is due TOMORROW. Please ensure your payment is ready — based on your account history, we want to make sure you're prepared. Reply STOP to opt out.`
+          ? `Hi ${t.name}, rent is due today. Please pay as soon as possible to avoid a late fee. Contact your property manager if you need help. Reply STOP to opt out.`
+          : `Hi ${t.name}, rent is due tomorrow. Please make sure your payment is ready to avoid a late fee. Reply STOP to opt out.`
         await sendAndLog(supabase, t, "pre_due_urgent", urgentMsg, snapshot, autoMode, results)
       }
     }
@@ -441,6 +446,7 @@ export async function GET(req: NextRequest) {
     // but have a history pattern suggesting risk. Offers a split-payment plan
     // proactively — preventing the missed payment entirely.
     // Only fires when: Stripe connected, no existing plan, not already delinquent.
+    const autoOffersEnabled = autoPaymentPlanOffersByUser.get(t.user_id) ?? true
     if (
       (risk.tier === "watch" || risk.tier === "reminder") &&
       hasHistory &&
@@ -448,7 +454,8 @@ export async function GET(req: NextRequest) {
       untilDue >= 3 && untilDue <= 7 &&
       !planByTenant.has(t.id) &&
       stripeConnectedByUser.get(t.user_id) &&
-      preDueRiskEnabled
+      preDueRiskEnabled &&
+      autoOffersEnabled
     ) {
       triggered = true
       results.evaluated++

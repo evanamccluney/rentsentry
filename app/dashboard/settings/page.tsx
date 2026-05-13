@@ -14,15 +14,33 @@ import {
 } from "@/lib/escalation-rules"
 
 const PROFILE_SELECT = `
-  auto_mode, pm_phone, pm_alerts_enabled, late_fee_percent, pm_display_name,
+  auto_mode, auto_payment_plan_offers, pm_phone, pm_alerts_enabled, late_fee_percent, late_fee_day, pm_display_name,
   attorney_name, attorney_email, attorney_phone,
   plaid_item_id, plaid_connected_at,
   stripe_account_id, stripe_connect_at,
   escalation_preset, reminder_day, payment_plan_day, pay_or_quit_day,
   cfk_review_day, attorney_review_day, repeat_offender_accelerator_days,
   pre_due_risk_outreach_enabled, pre_due_risk_review_days_before_due,
-  require_attorney_before_notice, payment_plan_before_notice, custom_escalation_notes
+  require_attorney_before_notice, payment_plan_before_notice, custom_escalation_notes,
+  timezone, notification_email, default_rent_due_day, pm_alert_triggers
 `
+
+const US_TIMEZONES = [
+  { value: "America/New_York",    label: "Eastern (ET) — New York, Miami, Atlanta" },
+  { value: "America/Chicago",     label: "Central (CT) — Chicago, Dallas, Houston" },
+  { value: "America/Denver",      label: "Mountain (MT) — Denver, Phoenix" },
+  { value: "America/Los_Angeles", label: "Pacific (PT) — Los Angeles, Seattle" },
+  { value: "America/Anchorage",   label: "Alaska (AKT)" },
+  { value: "Pacific/Honolulu",    label: "Hawaii (HT)" },
+]
+
+const PM_ALERT_OPTIONS: { key: string; label: string; desc: string }[] = [
+  { key: "pay_or_quit",       label: "Tenant hits Pay or Quit",        desc: "Full rent cycle unpaid — formal notice now appropriate" },
+  { key: "legal",             label: "Tenant hits Legal tier",          desc: "2+ months owed or 30+ days past due" },
+  { key: "installment_missed",label: "Installment payment missed",      desc: "Tenant on a payment plan misses a due installment" },
+  { key: "autopay_declined",  label: "Autopay payment declined",        desc: "Stripe or ACH payment fails for any tenant" },
+  { key: "tenant_response",   label: "Tenant replies to SMS",           desc: "Tenant responds to an automated or manual message" },
+]
 
 const PRESET_OPTIONS: Array<{ value: EscalationPreset; label: string; desc: string; color: string }> = [
   {
@@ -92,9 +110,15 @@ function dayInput(
 
 export default function SettingsPage() {
   const [autoMode, setAutoMode] = useState(false)
+  const [autoPaymentPlanOffers, setAutoPaymentPlanOffers] = useState(true)
+  const [timezone, setTimezone] = useState("America/New_York")
+  const [notificationEmail, setNotificationEmail] = useState("")
+  const [defaultRentDueDay, setDefaultRentDueDay] = useState(1)
+  const [pmAlertTriggers, setPmAlertTriggers] = useState<string[]>(["pay_or_quit", "legal", "installment_missed", "autopay_declined"])
   const [pmPhone, setPmPhone] = useState("")
   const [pmAlertsEnabled, setPmAlertsEnabled] = useState(false)
   const [lateFeePercent, setLateFeePercent] = useState("5")
+  const [lateFeeDay, setLateFeeDay] = useState(5)
   const [pmDisplayName, setPmDisplayName] = useState("")
   const [rules, setRules] = useState<EscalationRules>(() => rulesForPreset("professional"))
   const [attorneyName, setAttorneyName] = useState("")
@@ -120,9 +144,15 @@ export default function SettingsPage() {
       const { data } = await supabase.from("profiles").select(PROFILE_SELECT).eq("id", user.id).single()
       if (data) {
         setAutoMode(data.auto_mode ?? false)
+        setAutoPaymentPlanOffers(data.auto_payment_plan_offers ?? true)
+        setTimezone(data.timezone ?? "America/New_York")
+        setNotificationEmail(data.notification_email ?? "")
+        setDefaultRentDueDay(data.default_rent_due_day ?? 1)
+        setPmAlertTriggers(Array.isArray(data.pm_alert_triggers) ? data.pm_alert_triggers : ["pay_or_quit", "legal", "installment_missed", "autopay_declined"])
         setPmPhone(data.pm_phone ?? "")
         setPmAlertsEnabled(data.pm_alerts_enabled ?? false)
         setLateFeePercent(String(data.late_fee_percent ?? 5))
+        setLateFeeDay(data.late_fee_day ?? 5)
         setPmDisplayName(data.pm_display_name ?? "")
         setAttorneyName(data.attorney_name ?? "")
         setAttorneyEmail(data.attorney_email ?? "")
@@ -168,9 +198,15 @@ export default function SettingsPage() {
     const { error } = await supabase.from("profiles").upsert({
       id: user.id,
       auto_mode: autoMode,
+      auto_payment_plan_offers: autoPaymentPlanOffers,
+      timezone,
+      notification_email: notificationEmail.trim() || null,
+      default_rent_due_day: Math.min(28, Math.max(1, defaultRentDueDay)),
+      pm_alert_triggers: pmAlertTriggers,
       pm_phone: pmPhone.trim() || null,
       pm_alerts_enabled: pmAlertsEnabled,
       late_fee_percent: fee,
+      late_fee_day: Math.min(30, Math.max(0, lateFeeDay)),
       pm_display_name: pmDisplayName.trim() || null,
       attorney_name: attorneyName.trim() || null,
       attorney_email: attorneyEmail.trim() || null,
@@ -318,62 +354,183 @@ export default function SettingsPage() {
           <DollarSign size={15} className="text-amber-400" />
           <h2 className="text-white font-semibold text-sm">Late Fee</h2>
         </div>
-        <p className="text-[#4b5563] text-xs mb-4">Shown in tenant detail and estimates. Confirm this matches the lease and local law.</p>
-        <div className="flex items-center gap-3">
-          <input
-            type="number"
-            min="0"
-            max="50"
-            step="0.5"
-            value={lateFeePercent}
-            onChange={e => setLateFeePercent(e.target.value)}
-            className="w-24 bg-[#0d1117] border border-white/10 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-white/20 text-center"
-          />
-          <span className="text-[#6b7280] text-sm">% of monthly rent</span>
+        <p className="text-[#4b5563] text-xs mb-4">Must match your lease. These values are used in automated outreach timing and tenant-facing copy.</p>
+        <div className="flex flex-wrap items-center gap-5">
+          <div className="flex items-center gap-3">
+            <input
+              type="number"
+              min="0"
+              max="50"
+              step="0.5"
+              value={lateFeePercent}
+              onChange={e => setLateFeePercent(e.target.value)}
+              className="w-24 bg-[#0d1117] border border-white/10 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-white/20 text-center"
+            />
+            <span className="text-[#6b7280] text-sm">% of monthly rent</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-[#6b7280] text-sm">kicks in after</span>
+            <input
+              type="number"
+              min="0"
+              max="30"
+              value={lateFeeDay}
+              onChange={e => setLateFeeDay(Number(e.target.value))}
+              className="w-20 bg-[#0d1117] border border-white/10 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-white/20 text-center"
+            />
+            <span className="text-[#6b7280] text-sm">days past due</span>
+          </div>
         </div>
+        <p className="text-[#374151] text-xs mt-2">e.g. "5% kicks in after 5 days" — automated reminders will tell tenants to pay before Day {lateFeeDay} to avoid the fee.</p>
       </div>
 
       <div className="bg-[#111827] border border-white/10 rounded-2xl p-6 mb-5">
-        <div className="flex items-start justify-between gap-6">
+        <div className="flex items-start justify-between gap-6 mb-5">
           <div>
             <div className="flex items-center gap-2 mb-1">
               <Zap size={15} className="text-blue-400" />
               <h2 className="text-white font-semibold text-sm">Auto Mode</h2>
             </div>
             <p className="text-[#4b5563] text-xs leading-relaxed max-w-md">
-              Queues outreach for at-risk tenants. Legal notices still require review before sending.
+              Master switch for all automated tenant outreach — reminders, alerts, and offers. Legal notices always require your review.
             </p>
           </div>
           <button onClick={() => setAutoMode(v => !v)} className={`relative shrink-0 w-11 h-6 rounded-full transition-colors ${autoMode ? "bg-emerald-500" : "bg-white/10"}`}>
             <span className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${autoMode ? "left-6" : "left-1"}`} />
           </button>
         </div>
+
+        <div className={`rounded-xl border p-4 transition-opacity ${autoMode ? "opacity-100" : "opacity-40 pointer-events-none"}`} style={{ borderColor: "rgba(255,255,255,0.06)", background: "rgba(255,255,255,0.02)" }}>
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex gap-3">
+              <CalendarClock size={14} className="text-amber-400 mt-0.5 shrink-0" />
+              <div>
+                <div className="text-white text-sm font-semibold">Auto-send payment plan offers</div>
+                <p className="text-[#4b5563] text-xs leading-relaxed mt-0.5">
+                  3–7 days before rent is due, text at-risk tenants a split-pay offer with a Stripe payment link. Prevents missed payments before they happen.
+                </p>
+                <p className={`text-xs mt-1.5 ${autoPaymentPlanOffers ? "text-amber-400/70" : "text-[#374151]"}`}>
+                  {autoPaymentPlanOffers
+                    ? "Offers send automatically — logged in tenant activity."
+                    : "You'll see suggestions in the dashboard and send them yourself."}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setAutoPaymentPlanOffers(v => !v)}
+              className={`relative shrink-0 w-11 h-6 rounded-full transition-colors ${autoPaymentPlanOffers ? "bg-amber-500" : "bg-white/10"}`}
+            >
+              <span className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${autoPaymentPlanOffers ? "left-6" : "left-1"}`} />
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="bg-[#111827] border border-white/10 rounded-2xl p-6 mb-5">
-        <div className="flex items-start justify-between gap-6 mb-4">
+        <div className="flex items-start justify-between gap-6 mb-5">
           <div>
             <div className="flex items-center gap-2 mb-1">
               <Phone size={15} className="text-orange-400" />
               <h2 className="text-white font-semibold text-sm">PM Alerts</h2>
             </div>
-            <p className="text-[#4b5563] text-xs leading-relaxed max-w-md">Text you when tenants hit critical thresholds.</p>
+            <p className="text-[#4b5563] text-xs leading-relaxed max-w-md">Text or email you when specific events happen. You pick exactly what fires an alert.</p>
           </div>
           <button onClick={() => setPmAlertsEnabled(v => !v)} className={`relative shrink-0 w-11 h-6 rounded-full transition-colors ${pmAlertsEnabled ? "bg-orange-500" : "bg-white/10"}`}>
             <span className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${pmAlertsEnabled ? "left-6" : "left-1"}`} />
           </button>
         </div>
 
-        <label className="block">
-          <span className="text-[#4b5563] text-xs uppercase tracking-wide block mb-1.5">Your phone number</span>
-          <input
-            type="tel"
-            value={pmPhone}
-            onChange={e => setPmPhone(e.target.value)}
-            placeholder="+1 (919) 000-0000"
-            className="w-full bg-[#0d1117] border border-white/10 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-white/20 placeholder:text-[#374151]"
-          />
-        </label>
+        <div className={`space-y-4 transition-opacity ${pmAlertsEnabled ? "opacity-100" : "opacity-40 pointer-events-none"}`}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="block">
+              <span className="text-[#4b5563] text-xs uppercase tracking-wide block mb-1.5">Phone (SMS alerts)</span>
+              <input
+                type="tel"
+                value={pmPhone}
+                onChange={e => setPmPhone(e.target.value)}
+                placeholder="+1 (919) 000-0000"
+                className="w-full bg-[#0d1117] border border-white/10 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-white/20 placeholder:text-[#374151]"
+              />
+            </label>
+            <label className="block">
+              <span className="text-[#4b5563] text-xs uppercase tracking-wide block mb-1.5">Email (fallback if no phone)</span>
+              <input
+                type="email"
+                value={notificationEmail}
+                onChange={e => setNotificationEmail(e.target.value)}
+                placeholder="you@example.com"
+                className="w-full bg-[#0d1117] border border-white/10 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-white/20 placeholder:text-[#374151]"
+              />
+            </label>
+          </div>
+
+          <div>
+            <span className="text-[#4b5563] text-xs uppercase tracking-wide block mb-2">Alert me when</span>
+            <div className="space-y-2">
+              {PM_ALERT_OPTIONS.map(opt => {
+                const active = pmAlertTriggers.includes(opt.key)
+                return (
+                  <button
+                    key={opt.key}
+                    onClick={() => setPmAlertTriggers(v => active ? v.filter(k => k !== opt.key) : [...v, opt.key])}
+                    className={`w-full text-left px-3 py-2.5 rounded-xl border transition-colors flex items-start gap-3 ${
+                      active
+                        ? "border-orange-500/25 bg-orange-500/8 text-orange-300"
+                        : "border-white/[0.06] bg-white/[0.02] text-[#4b5563] hover:text-[#6b7280]"
+                    }`}
+                  >
+                    <span className={`mt-0.5 w-3.5 h-3.5 rounded border shrink-0 flex items-center justify-center ${active ? "bg-orange-500 border-orange-500" : "border-white/20"}`}>
+                      {active && <span className="w-1.5 h-1.5 rounded-sm bg-white" />}
+                    </span>
+                    <div>
+                      <div className="text-xs font-semibold">{opt.label}</div>
+                      <div className="text-[10px] opacity-70 mt-0.5">{opt.desc}</div>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-[#111827] border border-white/10 rounded-2xl p-6 mb-5">
+        <div className="flex items-center gap-2 mb-1">
+          <Bell size={15} className="text-blue-400" />
+          <h2 className="text-white font-semibold text-sm">Automation Timing</h2>
+        </div>
+        <p className="text-[#4b5563] text-xs mb-4">Your daily outreach runs at 8am in your timezone. Set this so reminders land at the right time for your tenants.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <label className="block">
+            <span className="text-[#4b5563] text-xs uppercase tracking-wide block mb-1.5">Your timezone</span>
+            <select
+              value={timezone}
+              onChange={e => setTimezone(e.target.value)}
+              className="w-full bg-[#0d1117] border border-white/10 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-white/20"
+            >
+              {US_TIMEZONES.map(tz => (
+                <option key={tz.value} value={tz.value}>{tz.label}</option>
+              ))}
+            </select>
+            <span className="text-[#374151] text-xs mt-1 block">
+              Outreach fires at 8am {US_TIMEZONES.find(t => t.value === timezone)?.label.split(" — ")[0] ?? timezone}.
+            </span>
+          </label>
+          <label className="block">
+            <span className="text-[#4b5563] text-xs uppercase tracking-wide block mb-1.5">Default rent due day</span>
+            <input
+              type="number"
+              min="1"
+              max="28"
+              value={defaultRentDueDay}
+              onChange={e => setDefaultRentDueDay(Number(e.target.value))}
+              className="w-full bg-[#0d1117] border border-white/10 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-white/20"
+            />
+            <span className="text-[#374151] text-xs mt-1 block">
+              Used when importing tenants that don&apos;t have a due day in the CSV. Day 1–28.
+            </span>
+          </label>
+        </div>
       </div>
 
       <div className="bg-[#111827] border border-white/10 rounded-2xl p-6 mb-5">

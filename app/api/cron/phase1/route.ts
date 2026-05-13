@@ -14,15 +14,21 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { Resend } from "resend"
+import { sendTenantSms } from "@/lib/sms"
+import { normalizePhone } from "@/lib/phone"
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-function daysUntilNextFirst(): number {
+function daysUntilNextDue(rentDueDay: number): number {
   const now = new Date()
-  const nextFirst = new Date(now.getFullYear(), now.getMonth() + 1, 1)
-  return Math.ceil((nextFirst.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+  const dueDay = Math.min(28, Math.max(1, rentDueDay))
+  const thisMonth = new Date(now.getFullYear(), now.getMonth(), dueDay)
+  const nextDue = thisMonth > now
+    ? thisMonth
+    : new Date(now.getFullYear(), now.getMonth() + 1, dueDay)
+  return Math.ceil((nextDue.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
 }
 
 function cardExpiresWithinDays(expiry: string, days: number): boolean {
@@ -55,11 +61,12 @@ async function alreadySentThisMonth(
 
 async function sendAndLog(
   supabase: any,
-  tenant: { id: string; user_id: string; name: string; email: string },
+  tenant: { id: string; user_id: string; name: string; email: string | null; phone?: string | null },
   type: string,
   subject: string,
   body: string,
-  note: string
+  note: string,
+  smsBody?: string | null
 ): Promise<boolean> {
   try {
     if (tenant.email) {
@@ -72,9 +79,13 @@ async function sendAndLog(
             <p style="font-size:13px;color:#4b5563;margin:0 0 20px;letter-spacing:0.05em;text-transform:uppercase;">RentSentry</p>
             <h2 style="margin:0 0 12px;font-size:20px;">${subject}</h2>
             <p style="color:#9ca3af;line-height:1.6;margin:0 0 20px;">${body}</p>
-            <p style="color:#4b5563;font-size:12px;margin:0;">If you have any questions, please contact your property manager directly.</p>
           </div>`,
       })
+    }
+
+    if (smsBody) {
+      const phone = normalizePhone(tenant.phone ?? null)
+      if (phone) await sendTenantSms(supabase, tenant.id, phone, smsBody)
     }
 
     await supabase.from("interventions").insert({
@@ -105,9 +116,7 @@ export async function GET(req: NextRequest) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
-  const days = daysUntilNextFirst()
   const results = {
-    days_until_first: days,
     card_expiry_30: 0,
     card_expiry_7: 0,
     no_payment_method: 0,
@@ -119,40 +128,36 @@ export async function GET(req: NextRequest) {
   // Fetch all active tenants with the fields we need
   const { data: tenants, error } = await supabase
     .from("tenants")
-    .select("id, name, email, user_id, card_expiry, payment_method, days_late_avg, late_payment_count, rent_amount")
+    .select("id, name, email, phone, user_id, card_expiry, payment_method, days_late_avg, late_payment_count, rent_amount, rent_due_day")
     .eq("status", "active")
 
   if (error || !tenants) {
     return NextResponse.json({ error: "Failed to fetch tenants", detail: error?.message }, { status: 500 })
   }
 
-  // ── 14 days out: card expiring within 30 days (early warning) ─────────────
-  if (days === 14) {
-    for (const t of tenants) {
-      if (!t.card_expiry) continue
-      if (!cardExpiresWithinDays(t.card_expiry, 30)) continue
-      if (cardExpiresWithinDays(t.card_expiry, 7)) continue  // save for 7-day alert
+  for (const t of tenants) {
+    const days = daysUntilNextDue(t.rent_due_day ?? 1)
+    const firstName = t.name.split(" ")[0]
 
+    // ── 14 days out: card expiring within 30 days (early warning) ───────────
+    if (days === 14 && t.card_expiry && cardExpiresWithinDays(t.card_expiry, 30) && !cardExpiresWithinDays(t.card_expiry, 7)) {
       if (await alreadySentThisMonth(supabase, t.id, "card_expiry_30")) {
         results.skipped_already_sent++
-        continue
+      } else {
+        const sent = await sendAndLog(
+          supabase, t,
+          "card_expiry_30",
+          "Heads up — your payment card expires soon",
+          `Hi ${firstName},<br><br>Your card on file (expiring ${t.card_expiry}) will expire before your next rent payment is due. Please update your payment method to avoid any interruption.`,
+          "Phase 1 — 14 days out, card expiring within 30 days",
+          `Hi ${firstName}, your payment card on file expires soon. Update it before rent is due to avoid issues. Reply STOP to opt out.`
+        )
+        sent ? results.card_expiry_30++ : results.errors++
       }
-
-      const sent = await sendAndLog(
-        supabase, t,
-        "card_expiry_30",
-        "Heads up — your payment card expires soon",
-        `Hi ${t.name},<br><br>Your card on file (expiring ${t.card_expiry}) will expire before your next rent payment is due. Please update your payment method to avoid any interruption on the 1st.`,
-        "Phase 1 — 14 days out, card expiring within 30 days"
-      )
-      sent ? results.card_expiry_30++ : results.errors++
     }
-  }
 
-  // ── 7 days out: card expiring within 7 days + no payment method ───────────
-  if (days === 7) {
-    for (const t of tenants) {
-      // Card expiring within 7 days
+    // ── 7 days out: card expiring within 7 days + no payment method ─────────
+    if (days === 7) {
       if (t.card_expiry && cardExpiresWithinDays(t.card_expiry, 7)) {
         if (await alreadySentThisMonth(supabase, t.id, "card_expiry_7")) {
           results.skipped_already_sent++
@@ -161,14 +166,14 @@ export async function GET(req: NextRequest) {
             supabase, t,
             "card_expiry_7",
             "Urgent — your payment card expires in 7 days",
-            `Hi ${t.name},<br><br>Your card on file (expiring ${t.card_expiry}) expires in less than 7 days. Rent is due on the 1st. Please update your payment method <strong>today</strong> to avoid a failed payment.`,
-            "Phase 1 — 7 days out, card expiring within 7 days"
+            `Hi ${firstName},<br><br>Your card on file (expiring ${t.card_expiry}) expires in less than 7 days. Rent is due soon. Please update your payment method <strong>today</strong> to avoid a failed payment.`,
+            "Phase 1 — 7 days out, card expiring within 7 days",
+            `Hi ${firstName}, urgent — your payment card expires in 7 days and rent is due soon. Update it today. Reply STOP to opt out.`
           )
           sent ? results.card_expiry_7++ : results.errors++
         }
       }
 
-      // No payment method on file
       const noMethod = !t.payment_method || t.payment_method === "unknown"
       if (noMethod) {
         if (await alreadySentThisMonth(supabase, t.id, "no_payment_method")) {
@@ -178,34 +183,33 @@ export async function GET(req: NextRequest) {
             supabase, t,
             "no_payment_method",
             "No payment method on file — rent due in 7 days",
-            `Hi ${t.name},<br><br>We don't have a payment method on file for your account and rent is due in 7 days. Please contact your property manager to add your card or bank account information as soon as possible.`,
-            "Phase 1 — 7 days out, no payment method on file"
+            `Hi ${firstName},<br><br>No payment method is on file for your account and rent is due in 7 days. Please add one as soon as possible to avoid any issues.`,
+            "Phase 1 — 7 days out, no payment method on file",
+            `Hi ${firstName}, no payment method is on file and rent is due in 7 days. Reply to this message for help. Reply STOP to opt out.`
           )
           sent ? results.no_payment_method++ : results.errors++
         }
       }
     }
-  }
 
-  // ── 3 days out: proactive reminder for tenants with late history ──────────
-  if (days === 3) {
-    for (const t of tenants) {
+    // ── 3 days out: proactive reminder for tenants with late history ─────────
+    if (days === 3) {
       const hasHistory = (t.late_payment_count ?? 0) >= 2 || (t.days_late_avg ?? 0) >= 3
-      if (!hasHistory) continue
-
-      if (await alreadySentThisMonth(supabase, t.id, "proactive_reminder")) {
-        results.skipped_already_sent++
-        continue
+      if (hasHistory) {
+        if (await alreadySentThisMonth(supabase, t.id, "proactive_reminder")) {
+          results.skipped_already_sent++
+        } else {
+          const sent = await sendAndLog(
+            supabase, t,
+            "proactive_reminder",
+            "Friendly reminder — rent is due in 3 days",
+            `Hi ${firstName},<br><br>Just a friendly heads up that rent is due in 3 days. If you're expecting any difficulty this month, please reach out as soon as possible — flexible options may be available.`,
+            "Phase 1 — 3 days out, tenant has late payment history",
+            `Hi ${firstName}, rent is due in 3 days. Reply to this message if you expect any issues this month — options are available. Reply STOP to opt out.`
+          )
+          sent ? results.proactive_reminder++ : results.errors++
+        }
       }
-
-      const sent = await sendAndLog(
-        supabase, t,
-        "proactive_reminder",
-        "Friendly reminder — rent is due in 3 days",
-        `Hi ${t.name},<br><br>Just a friendly heads up that rent is due on the 1st — 3 days from now. If you're expecting any difficulty this month, reach out to your property manager now. Flexible options are available and it's always better to communicate early.`,
-        "Phase 1 — 3 days out, tenant has late payment history"
-      )
-      sent ? results.proactive_reminder++ : results.errors++
     }
   }
 
@@ -213,10 +217,9 @@ export async function GET(req: NextRequest) {
   const totalSent = results.card_expiry_30 + results.card_expiry_7 + results.no_payment_method + results.proactive_reminder
 
   if (totalSent > 0) {
-    // Group by user_id to send one summary per PM
-    const userIds = [...new Set(tenants.map(t => t.user_id))]
+    const summaryUserIds = [...new Set(tenants.map(t => t.user_id))]
 
-    for (const userId of userIds) {
+    for (const userId of summaryUserIds) {
       try {
         const { data: userData } = await supabase.auth.admin.getUserById(userId)
         const pmEmail = userData?.user?.email
@@ -245,9 +248,9 @@ export async function GET(req: NextRequest) {
 
   // ── Stale data nudge — email PM if no CSV uploaded in 7+ days ────────────────
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
-  const userIds = [...new Set(tenants.map(t => t.user_id))]
+  const allUserIds = [...new Set(tenants.map(t => t.user_id))]
 
-  for (const userId of userIds) {
+  for (const userId of allUserIds) {
     try {
       // Find the most recently created tenant for this user
       const { data: latestTenant } = await supabase
@@ -307,7 +310,6 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     ok: true,
     ran_at: new Date().toISOString(),
-    days_until_first: days,
     results,
   })
 }

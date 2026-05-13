@@ -1,6 +1,6 @@
 "use client"
 import { useState } from "react"
-import { Clock, ChevronDown, ChevronRight, Scale, Zap, Heart, Phone, FileText, MessageSquare, ClipboardList, CheckCircle2 } from "lucide-react"
+import { Clock, ChevronDown, ChevronRight, Scale, Zap, Heart, Phone, FileText, MessageSquare, ClipboardList, CheckCircle2, Bot, AlertCircle, Link } from "lucide-react"
 
 interface InterventionSnapshot {
   tier: string
@@ -50,11 +50,29 @@ const INTERVENTION_LABELS: Record<string, string> = {
   cash_for_keys:               "Cash for Keys offered",
   legal_packet:                "Legal notice sent",
   call_logged:                 "Call logged",
+  tenant_response:             "Tenant response logged",
   payment_plan_agreed:         "Payment plan agreed",
+  payment_link_sent:           "Payment link sent to tenant",
+  pre_due_installment_offer:   "Installment offer sent to tenant",
   custom_sms:                  "Custom SMS sent",
   manual_note:                 "Note added",
-  situation_intake:            "Situation logged",
+  situation_intake:            "Pre-escalation intake completed",
   resolution_outcome:          "Outcome logged",
+  tenant_ai_reply:             "AI replied to tenant",
+  tenant_escalation_request:   "Tenant requested PM contact",
+  overdue_warning:             "Overdue warning sent",
+  day0_reminder:               "Due date reminder sent",
+  payment_link_followup:       "Payment link follow-up sent",
+  plan_offer_followup:         "Plan offer follow-up sent",
+  pm_alert_installment_missed: "Installment missed — PM notified",
+  stale_data_nudge:            "Stale data nudge sent to PM",
+  plaid_payment_auto:          "Payment auto-matched from bank feed",
+  pm_confirmation_sent:        "PM asked to confirm payment",
+  pm_contact_check_sent:       "PM asked about tenant contact",
+  contact_noted:               "PM confirmed recent contact",
+  no_contact_confirmed:        "PM confirmed no recent contact",
+  pm_payment_link_confirm_sent: "PM asked to confirm payment link",
+  pm_payment_link_not_paid:    "PM confirmed payment link unpaid",
   // legacy
   card_expiry_alert:           "Card expiry reminder sent",
   card_expiry_30:              "Card expiry reminder sent",
@@ -203,11 +221,93 @@ function HardshipEntry({ entry, isLast }: { entry: Intervention; isLast: boolean
 }
 
 const USER_ACTION_ICONS: Record<string, { icon: typeof Phone; color: string; bg: string }> = {
-  call_logged:          { icon: Phone,         color: "text-blue-400",    bg: "bg-blue-500/10 border-blue-500/20" },
-  payment_plan_agreed:  { icon: FileText,      color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
-  custom_sms:           { icon: MessageSquare, color: "text-violet-400",  bg: "bg-violet-500/10 border-violet-500/20" },
-  situation_intake:     { icon: ClipboardList, color: "text-violet-300",  bg: "bg-violet-500/10 border-violet-500/20" },
-  resolution_outcome:   { icon: CheckCircle2,  color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
+  call_logged:                { icon: Phone,         color: "text-blue-400",    bg: "bg-blue-500/10 border-blue-500/20" },
+  tenant_response:            { icon: MessageSquare, color: "text-blue-300",    bg: "bg-blue-500/8 border-blue-500/15" },
+  payment_plan_agreed:        { icon: FileText,      color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
+  payment_link_sent:          { icon: Link,          color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
+  pre_due_installment_offer:  { icon: FileText,      color: "text-amber-400",   bg: "bg-amber-500/10 border-amber-500/20" },
+  custom_sms:                 { icon: MessageSquare, color: "text-violet-400",  bg: "bg-violet-500/10 border-violet-500/20" },
+  situation_intake:           { icon: ClipboardList, color: "text-violet-300",  bg: "bg-violet-500/10 border-violet-500/20" },
+  resolution_outcome:         { icon: CheckCircle2,  color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
+  contact_noted:              { icon: CheckCircle2,  color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
+  no_contact_confirmed:       { icon: AlertCircle,   color: "text-amber-400",   bg: "bg-amber-500/10 border-amber-500/20" },
+  pm_payment_confirmed:       { icon: CheckCircle2,  color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
+  tenant_escalation_request:  { icon: AlertCircle,   color: "text-orange-400",  bg: "bg-orange-500/10 border-orange-500/20" },
+  day0_reminder:              { icon: Clock,          color: "text-blue-400",    bg: "bg-blue-500/10 border-blue-500/20" },
+  payment_link_followup:      { icon: Link,           color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
+  plan_offer_followup:        { icon: FileText,       color: "text-amber-400",   bg: "bg-amber-500/10 border-amber-500/20" },
+}
+
+function ChatEntry({ entry, isLast }: { entry: Intervention; isLast: boolean }) {
+  const snap = entry.snapshot as {
+    tenant_message?: string
+    ai_reply?: string
+    action?: string
+    action_url?: string
+    exchange_number?: number
+  } | null
+
+  const actionLabel: Record<string, string> = {
+    send_payment_link: "Sent payment link",
+    send_plan_link:    "Sent installment plan offer",
+    escalate_to_pm:    "Flagged for PM review",
+  }
+
+  return (
+    <div className="flex gap-3 relative">
+      {!isLast && (
+        <div className="absolute left-3.5 top-7 bottom-0 w-px bg-white/5" />
+      )}
+      <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 z-10 mt-0.5 bg-violet-500/10 border border-violet-500/20">
+        <Bot size={11} className="text-violet-400" />
+      </div>
+      <div className="pb-4 min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-[#d1d5db] leading-snug">AI chatbot exchange</span>
+          {snap?.exchange_number && (
+            <span className="text-[10px] text-[#374151] uppercase tracking-wide">#{snap.exchange_number} of 3</span>
+          )}
+        </div>
+        <div className="text-[#4b5563] text-xs mt-0.5">{formatDateTime(entry.sent_at)}</div>
+
+        <div className="mt-2.5 space-y-1.5">
+          {snap?.tenant_message && (
+            <div className="flex justify-start">
+              <div className="max-w-[85%] bg-[#1a2035] border border-white/[0.06] rounded-2xl rounded-tl-sm px-3 py-2">
+                <div className="text-[10px] text-[#374151] uppercase tracking-wide mb-1">Tenant</div>
+                <div className="text-[#9ca3af] text-xs leading-relaxed">{snap.tenant_message}</div>
+              </div>
+            </div>
+          )}
+          {snap?.ai_reply && (
+            <div className="flex justify-end">
+              <div className="max-w-[85%] bg-violet-500/[0.08] border border-violet-500/20 rounded-2xl rounded-tr-sm px-3 py-2">
+                <div className="text-[10px] text-violet-400/60 uppercase tracking-wide mb-1">AI assistant</div>
+                <div className="text-[#c4b5fd] text-xs leading-relaxed">{snap.ai_reply}</div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {snap?.action && snap.action !== "none" && (
+          <div className="mt-2 flex items-center gap-1.5 text-xs text-[#4b5563]">
+            <span className="text-violet-400/70">↳</span>
+            <span>{actionLabel[snap.action] ?? snap.action}</span>
+            {snap.action_url && (
+              <a
+                href={snap.action_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-violet-400 hover:text-violet-300 underline underline-offset-2 text-[10px] ml-1"
+              >
+                view link
+              </a>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
 
 function ActivityEntry({ entry, isLast }: { entry: Intervention; isLast: boolean }) {
@@ -220,7 +320,9 @@ function ActivityEntry({ entry, isLast }: { entry: Intervention; isLast: boolean
 
   const baseLabel = entry.type.startsWith("pm_alert_day")
     ? `PM alerted (Day ${entry.type.replace("pm_alert_day", "")} tier)`
-    : (INTERVENTION_LABELS[entry.type] ?? entry.type)
+    : entry.type.startsWith("auto_reminder_day")
+      ? `Auto reminder sent (Day ${entry.type.replace("auto_reminder_day", "")} tier)`
+      : (INTERVENTION_LABELS[entry.type] ?? entry.type)
 
   const label = isDryRun
     ? `System evaluated — would have sent: ${baseLabel.toLowerCase()}`
@@ -296,7 +398,9 @@ export default function TenantActivityLog({ interventions }: { interventions: In
       {interventions.map((a, i) => (
         a.type === "hardship_checkin"
           ? <HardshipEntry key={a.id} entry={a} isLast={i === interventions.length - 1} />
-          : <ActivityEntry key={a.id} entry={a} isLast={i === interventions.length - 1} />
+          : a.type === "tenant_ai_reply"
+            ? <ChatEntry key={a.id} entry={a} isLast={i === interventions.length - 1} />
+            : <ActivityEntry key={a.id} entry={a} isLast={i === interventions.length - 1} />
       ))}
     </div>
   )
