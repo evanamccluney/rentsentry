@@ -114,13 +114,14 @@ async function handleTenantReply(supabase: any, tenant: TenantRow, messageBody: 
   const isFirstReply = priorCount === 0
 
   // Fetch PM profile for display name, Stripe, and escalation rules
-  const { data: profile } = await supabase
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("pm_display_name, stripe_account_id, stripe_charges_enabled, late_fee_day, escalation_preset, reminder_day, payment_plan_day, pay_or_quit_day, cfk_review_day, attorney_review_day, repeat_offender_accelerator_days")
+    .select("pm_display_name, stripe_account_id, late_fee_day, escalation_preset, reminder_day, payment_plan_day, pay_or_quit_day, cfk_review_day, attorney_review_day, repeat_offender_accelerator_days")
     .eq("id", tenant.user_id)
     .single()
+  if (profileError) console.error("sms-webhook profile error:", profileError.message)
 
-  console.log("sms-webhook profile:", JSON.stringify({ stripe_account_id: profile?.stripe_account_id ?? null, stripe_charges_enabled: profile?.stripe_charges_enabled ?? null }))
+  console.log("sms-webhook profile:", JSON.stringify({ stripe_account_id: profile?.stripe_account_id ?? null }))
   const pmName = profile?.pm_display_name ?? "your property manager"
   const escalationRules = profileToEscalationRules(profile)
 
@@ -173,9 +174,8 @@ async function handleTenantReply(supabase: any, tenant: TenantRow, messageBody: 
   if (hasPlan) contextLines.push("Tenant already has an active payment plan — do NOT offer another one.")
   if (isPastCfkReview) contextLines.push(`IMPORTANT: This tenant is ${days} days past due — at cash-for-keys / eviction review territory. Do NOT offer payment links or plans. Acknowledge their message warmly and let them know their property manager will be in touch shortly.`)
 
-  // send_payment_link needs charges_enabled; send_plan_link only needs the account to exist
-  const stripeReady = !!profile?.stripe_account_id && !!profile?.stripe_charges_enabled && !hasPlan && !isPastCfkReview
-  const planLinkReady = !!profile?.stripe_account_id && !hasPlan && !isPastCfkReview
+  const stripeReady = !!profile?.stripe_account_id && !hasPlan && !isPastCfkReview
+  const planLinkReady = stripeReady
   const availableActions = isPastCfkReview
     ? ["none", "escalate_to_pm"]
     : planLinkReady
