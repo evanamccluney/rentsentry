@@ -31,10 +31,15 @@ export async function POST(req: NextRequest) {
 
       const setupIntent = await stripe.setupIntents.retrieve(session.setup_intent as string)
       if (setupIntent.payment_method) {
-        await supabase.from("tenants").update({
+        const update: Record<string, unknown> = {
           stripe_payment_method_id: setupIntent.payment_method as string,
           updated_at: new Date().toISOString(),
-        }).eq("id", tenantId)
+        }
+        // If tenant initiated monthly autopay via SMS chatbot, enable it
+        if (session.metadata?.autopay_type === "monthly") {
+          update.autopay_monthly = true
+        }
+        await supabase.from("tenants").update(update).eq("id", tenantId)
       }
       return NextResponse.json({ received: true })
     }

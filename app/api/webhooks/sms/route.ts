@@ -85,6 +85,7 @@ function detectIntent(msg: string): "send_payment_link" | "send_plan_link" | "es
   // Require explicit payment context to avoid false positives on "split", "partial", etc.
   if (/installment|\bpayment\s+plan\b|pay\s+over\s+time|split\s+(my\s+)?(pay|rent|balance)|spread\s+(my\s+)?(pay|rent|balance)|partial\s+pay|multiple\s+pay|pay\s+in\s+part|two\s+pay|three\s+pay/.test(m)) return "send_plan_link"
   if (/pay\s+now|pay\s+in\s+full|pay\s+today|pay\s+it\s+all|pay\s+everything|full\s+pay|pay.*balance|pay\s+online|send.*link|want\s+to\s+pay|how\s+do\s+i\s+pay/.test(m)) return "send_payment_link"
+  if (/\bauto.?pay\b|automatic\s+pay|set\s+up\s+(pay|auto)|recurring\s+pay|auto\s+charge|save\s+(my\s+)?(card|bank|payment)/.test(m)) return "setup_autopay"
   if (/speak\s+to|talk\s+to|call\s+me|call\s+back|\bdispute\b|not\s+my\s+(balance|charge|amount)|wrong\s+amount|maintenance|broken|repair/.test(m)) return "escalate_to_pm"
   return null
 }
@@ -103,6 +104,8 @@ interface TenantRow {
   days_late_avg: number
   late_payment_count: number
   previous_delinquency: boolean
+  stripe_customer_id: string | null
+  autopay_monthly: boolean
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -194,13 +197,20 @@ async function handleTenantReply(supabase: any, tenant: TenantRow, messageBody: 
 
   const stripeReady = !!profile?.stripe_account_id && !hasPlan && !isPastCfkReview
   const planLinkReady = stripeReady
+  const autopayEligible = !!profile?.stripe_account_id && !tenant.autopay_monthly && !isPastCfkReview
   const availableActions = isPastCfkReview
     ? ["none", "escalate_to_pm"]
     : planLinkReady
-      ? stripeReady
-        ? ["none", "send_payment_link", "send_plan_link", "escalate_to_pm"]
-        : ["none", "send_plan_link", "escalate_to_pm"]
-      : ["none", "escalate_to_pm"]
+      ? [
+          "none",
+          "send_payment_link",
+          "send_plan_link",
+          ...(autopayEligible ? ["setup_autopay"] : []),
+          "escalate_to_pm",
+        ]
+      : autopayEligible
+        ? ["none", "setup_autopay", "escalate_to_pm"]
+        : ["none", "escalate_to_pm"]
 
   // Detect intent in code first — AI only writes the reply text, never picks the action alone
   const rawIntent = detectIntent(messageBody)
@@ -363,6 +373,34 @@ Rules:
     }
   }
 
+  if (aiAction === "setup_autopay" && profile?.stripe_account_id) {
+    try {
+      let customerId = tenant.stripe_customer_id
+      if (!customerId) {
+        const customer = await stripe.customers.create({
+          name: tenant.name,
+          metadata: { tenant_id: tenant.id, landlord_id: tenant.user_id },
+        })
+        customerId = customer.id
+        await supabase.from("tenants").update({ stripe_customer_id: customerId }).eq("id", tenant.id)
+      }
+      const session = await stripe.checkout.sessions.create({
+        mode: "setup",
+        customer: customerId,
+        payment_method_types: ["us_bank_account", "card"],
+        payment_method_options: {
+          us_bank_account: { financial_connections: { permissions: ["payment_method"] } },
+        },
+        metadata: { tenant_id: tenant.id, landlord_id: tenant.user_id, autopay_type: "monthly" },
+        success_url: `${APP_URL}/pay/autopay-confirmed`,
+        cancel_url: `${APP_URL}/pay/cancelled`,
+      })
+      if (session.url) actionUrl = session.url
+    } catch {
+      aiAction = "none"
+    }
+  }
+
   if (aiAction === "escalate_to_pm") {
     await supabase.from("interventions").insert({
       tenant_id: tenant.id,
@@ -481,7 +519,7 @@ export async function POST(req: NextRequest) {
   const lastTenDigits = fromPhone.replace(/\D/g, "").slice(-10)
   const { data: tenantCandidates } = await supabase
     .from("tenants")
-    .select("id, name, unit, user_id, balance_due, rent_amount, last_payment_date, rent_due_day, days_late_avg, late_payment_count, previous_delinquency, phone")
+    .select("id, name, unit, user_id, balance_due, rent_amount, last_payment_date, rent_due_day, days_late_avg, late_payment_count, previous_delinquency, phone, stripe_customer_id, autopay_monthly")
     .like("phone", `%${lastTenDigits}`)
     .eq("status", "active")
 
