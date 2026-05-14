@@ -82,9 +82,10 @@ function emptyTwiml(): NextResponse {
 
 function detectIntent(msg: string): "send_payment_link" | "send_plan_link" | "escalate_to_pm" | null {
   const m = msg.toLowerCase()
-  if (/installment|payment.?plan|pay.?over|split.?pay|spread|partial|multiple.?pay|pay.?in.?part|break.?it.?up|half.?now|two.?pay|three.?pay/.test(m)) return "send_plan_link"
-  if (/pay.?now|pay.?in.?full|pay.?today|pay.?it.?all|pay.?everything|full.?pay|pay.*balance|pay.?online|send.*link|i.?want.?to.?pay|how.?do.?i.?pay/.test(m)) return "send_payment_link"
-  if (/speak.?to|talk.?to|call.?me|call.?back|dispute|not.?my|wrong.?amount|maintenance|broken|repair/.test(m)) return "escalate_to_pm"
+  // Require explicit payment context to avoid false positives on "split", "partial", etc.
+  if (/installment|\bpayment\s+plan\b|pay\s+over\s+time|split\s+(my\s+)?(pay|rent|balance)|spread\s+(my\s+)?(pay|rent|balance)|partial\s+pay|multiple\s+pay|pay\s+in\s+part|two\s+pay|three\s+pay/.test(m)) return "send_plan_link"
+  if (/pay\s+now|pay\s+in\s+full|pay\s+today|pay\s+it\s+all|pay\s+everything|full\s+pay|pay.*balance|pay\s+online|send.*link|want\s+to\s+pay|how\s+do\s+i\s+pay/.test(m)) return "send_payment_link"
+  if (/speak\s+to|talk\s+to|call\s+me|call\s+back|\bdispute\b|not\s+my\s+(balance|charge|amount)|wrong\s+amount|maintenance|broken|repair/.test(m)) return "escalate_to_pm"
   return null
 }
 
