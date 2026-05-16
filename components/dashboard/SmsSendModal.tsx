@@ -1,6 +1,6 @@
 "use client"
 import { useState, useEffect } from "react"
-import { Send, X, Sparkles, Loader2 } from "lucide-react"
+import { Send, X, Sparkles, Loader2, Link } from "lucide-react"
 
 interface TenantContext {
   name: string
@@ -23,13 +23,22 @@ interface Props {
   loading: boolean
 }
 
+// For split_pay_offer the link is generated server-side — show a static preview
+function splitPayPreview(tenant: TenantContext): string {
+  const firstName = (tenant.name || "Resident").split(" ")[0]
+  const balance = (tenant.balance_due ?? 0).toLocaleString()
+  return `Hi ${firstName}, your property manager is offering to split your $${balance} past-due balance into installments. Choose your plan: [payment link] Reply STOP to opt out.`
+}
+
 export default function SmsSendModal({ tenantId, actionType, tenant, onConfirm, onCancel, loading }: Props) {
-  const [draft, setDraft] = useState("")
-  const [fetching, setFetching] = useState(true)
+  const isSplitPay = actionType === "split_pay_offer"
+  const [draft, setDraft] = useState(() => isSplitPay ? splitPayPreview(tenant) : "")
+  const [fetching, setFetching] = useState(!isSplitPay)
   const [fetchFailed, setFetchFailed] = useState(false)
   const hasPhone = !!tenant.phone
 
   async function fetchDraft() {
+    if (isSplitPay) return
     setFetching(true)
     setFetchFailed(false)
     try {
@@ -63,7 +72,7 @@ export default function SmsSendModal({ tenantId, actionType, tenant, onConfirm, 
     }
   }
 
-  useEffect(() => { fetchDraft() }, [])
+  useEffect(() => { if (!isSplitPay) fetchDraft() }, [])
 
   const charCount = draft.length
   const overLimit = charCount > 320
@@ -100,6 +109,16 @@ export default function SmsSendModal({ tenantId, actionType, tenant, onConfirm, 
             }
           </div>
 
+          {/* Split-pay notice */}
+          {isSplitPay && (
+            <div className="flex items-start gap-2 bg-blue-500/10 border border-blue-500/20 rounded-xl px-3 py-2.5 mb-4">
+              <Link size={12} className="text-blue-400 mt-0.5 shrink-0" />
+              <p className="text-blue-300 text-xs leading-relaxed">
+                A secure payment link and your display name are auto-inserted when sent. The preview below shows the template.
+              </p>
+            </div>
+          )}
+
           {/* SMS bubble */}
           <div className="bg-[#0d1117] border border-white/5 rounded-2xl rounded-tl-sm p-4 mb-1">
             {fetching ? (
@@ -123,6 +142,8 @@ export default function SmsSendModal({ tenantId, actionType, tenant, onConfirm, 
                 maxLength={640}
                 autoFocus
               />
+            ) : isSplitPay ? (
+              <p className="text-[#d1d5db] text-sm leading-relaxed">{draft}</p>
             ) : (
               <textarea
                 value={draft}
@@ -139,14 +160,16 @@ export default function SmsSendModal({ tenantId, actionType, tenant, onConfirm, 
             <span className={`text-[10px] ${overLimit ? "text-red-400" : "text-[#2e3a50]"}`}>
               SMS · {charCount} chars · {segmentCount} segment{segmentCount !== 1 ? "s" : ""}
             </span>
-            <button
-              onClick={fetchDraft}
-              disabled={fetching}
-              className="flex items-center gap-1 text-[#4b5563] hover:text-white text-[10px] transition-colors disabled:opacity-40"
-            >
-              <Sparkles size={10} />
-              Regenerate
-            </button>
+            {!isSplitPay && (
+              <button
+                onClick={fetchDraft}
+                disabled={fetching}
+                className="flex items-center gap-1 text-[#4b5563] hover:text-white text-[10px] transition-colors disabled:opacity-40"
+              >
+                <Sparkles size={10} />
+                Regenerate
+              </button>
+            )}
           </div>
 
           <p className="text-[#374151] text-xs mb-5">
