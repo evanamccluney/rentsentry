@@ -312,6 +312,12 @@ function SettingsPageInner() {
       }
 
       setLoaded(true)
+
+      // Scroll to hash section after data loads
+      if (typeof window !== "undefined" && window.location.hash) {
+        const el = document.querySelector(window.location.hash)
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" })
+      }
     }
     load()
   }, [searchParams])
@@ -519,7 +525,7 @@ function SettingsPageInner() {
         </label>
       </div>
 
-      <div className="bg-[#111827] border border-white/10 rounded-2xl p-6 mb-5">
+      <div id="escalation" className="bg-[#111827] border border-white/10 rounded-2xl p-6 mb-5 scroll-mt-6">
         <div className="flex items-center gap-2 mb-1">
           <Scale size={15} className="text-red-400" />
           <h2 className="text-white font-semibold text-sm">Escalation Rules</h2>
@@ -651,7 +657,7 @@ function SettingsPageInner() {
         <p className="text-[#374151] text-xs mt-2">e.g. &quot;5% kicks in after 5 days&quot; — automated reminders will tell tenants to pay before Day {lateFeeDay} to avoid the fee.</p>
       </div>
 
-      <div className="bg-[#111827] border border-white/10 rounded-2xl p-6 mb-5">
+      <div id="auto-mode" className="bg-[#111827] border border-white/10 rounded-2xl p-6 mb-5 scroll-mt-6">
         <div className="flex items-start justify-between gap-6 mb-5">
           <div>
             <div className="flex items-center gap-2 mb-1">
@@ -700,7 +706,7 @@ function SettingsPageInner() {
         </div>
       </div>
 
-      <div className="bg-[#111827] border border-white/10 rounded-2xl p-6 mb-5">
+      <div id="pm-alerts" className="bg-[#111827] border border-white/10 rounded-2xl p-6 mb-5 scroll-mt-6">
         <div className="flex items-start justify-between gap-6 mb-5">
           <div>
             <div className="flex items-center gap-2 mb-1">
@@ -890,7 +896,7 @@ function SettingsPageInner() {
         />
       </div>
 
-      <div className="bg-[#111827] border border-white/10 rounded-2xl p-6 mb-5">
+      <div id="stripe" className="bg-[#111827] border border-white/10 rounded-2xl p-6 mb-5 scroll-mt-6">
         <div className="flex items-center gap-2 mb-1">
           <DollarSign size={15} className="text-blue-400" />
           <h2 className="text-white font-semibold text-sm">Payment Collection</h2>
