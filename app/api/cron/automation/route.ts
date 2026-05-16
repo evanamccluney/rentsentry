@@ -386,9 +386,10 @@ export async function GET(req: NextRequest) {
           const expiresAt = new Date(Date.now() + 7 * 86_400_000).toISOString()
           const firstName = t.name.split(" ")[0]
           const pmName = pmDisplayNameByUser.get(t.user_id)
-          const from = pmName ? `${pmName} (your property manager)` : "your property manager"
+          const pmFirst = pmName ? pmName.split(" ")[0] : null
+          const from = pmFirst ? `your property manager ${pmFirst}` : "your property manager"
           const smsBody = includesNextMonth
-            ? `Hi ${firstName}, ${from} is splitting your $${totalAmount.toLocaleString()} balance (past due + upcoming rent) into up to ${maxInstallments} payments. Choose your plan: ${offerUrl} Reply STOP to opt out.`
+            ? `Hi ${firstName}, ${from} is offering to split your $${totalAmount.toLocaleString()} balance (past due + upcoming rent) into up to ${maxInstallments} payments. Choose your plan: ${offerUrl} Reply STOP to opt out.`
             : `Hi ${firstName}, ${from} is offering to split your $${totalAmount.toLocaleString()} past-due balance into installments. Choose your plan: ${offerUrl} Reply STOP to opt out.`
           const offerSnapshot = {
             ...snapshot,

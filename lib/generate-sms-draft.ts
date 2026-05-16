@@ -10,7 +10,7 @@ const ACTION_CONTEXT: Record<string, string> = {
   card_expiry_alert:
     "a payment method expiry alert — the card or account on file is expiring soon and needs to be updated before rent is due",
   split_pay_offer:
-    "an installment plan offer — let the tenant know their property manager is offering to split their balance into payments and that a link to choose their plan is included in this message. Keep it warm and clear.",
+    "an installment plan offer — let the tenant know their property manager is offering to split their balance into payments and that a link to choose their plan is included in this message. Refer to the sender as 'your property manager' (not by name). Keep it warm and clear.",
   cash_for_keys:
     "a time-sensitive message that the property manager needs to speak with the tenant about their housing situation today — do not hint at what the conversation is about or mention move-out",
   legal_packet:

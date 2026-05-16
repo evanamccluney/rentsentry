@@ -121,10 +121,11 @@ export async function POST(req: NextRequest) {
     })
 
     const offerUrl = `${process.env.NEXT_PUBLIC_APP_URL}/pay/offer/${token}`
-    const from = pmName ? `${pmName} (your property manager)` : "your property manager"
+    const pmFirst = pmName ? pmName.split(" ")[0] : null
+    const from = pmFirst ? `your property manager ${pmFirst}` : "your property manager"
     const firstName = (name || "Resident").split(" ")[0]
     const smsBody = offer.includesNextMonth
-      ? `Hi ${firstName}, ${from} is splitting your $${offer.totalAmount.toLocaleString()} balance (past due + upcoming rent) into up to ${offer.maxInstallments} payments. Choose your plan: ${offerUrl} Reply STOP to opt out.`
+      ? `Hi ${firstName}, ${from} is offering to split your $${offer.totalAmount.toLocaleString()} balance (past due + upcoming rent) into up to ${offer.maxInstallments} payments. Choose your plan: ${offerUrl} Reply STOP to opt out.`
       : `Hi ${firstName}, ${from} is offering to split your $${offer.totalAmount.toLocaleString()} balance into installments. Choose your plan: ${offerUrl} Reply STOP to opt out.`
 
     const normalizedPhone = normalizePhone(phone)
