@@ -341,9 +341,10 @@ export async function GET(req: NextRequest) {
       continue
     }
 
-    // ── Rule A: proactive reminder — behavior-based, no payment metadata needed ─
-    // Fires before rent due date for watch/reminder tenants with late history.
-    // Research: chronic-late and at-risk tenants benefit from extra lead time to prepare.
+    // ── Rule A: balance reminder or payment plan offer ───────────────────────────
+    // For reminder/payment_plan tier tenants with an outstanding balance.
+    // If Stripe is connected: send a split_pay_offer with a real payment link.
+    // Otherwise: send a plain current_balance_reminder nudge.
     if (
       hasBalance &&
       !pmConfirmPending &&
@@ -351,19 +352,60 @@ export async function GET(req: NextRequest) {
     ) {
       triggered = true
       results.evaluated++
-      const alreadySent = await recentlySent(supabase, t.id, "current_balance_reminder", 14)
-      if (alreadySent) {
-        results.skipped_dedup++
+
+      const stripeConnected = stripeConnectedByUser.get(t.user_id) ?? false
+
+      if (stripeConnected) {
+        // Real payment plan offer with tenant-facing link
+        const alreadySent = await recentlySent(supabase, t.id, "split_pay_offer", 14)
+        if (alreadySent) {
+          results.skipped_dedup++
+        } else {
+          const balanceDue: number = t.balance_due ?? 0
+          const rentAmount: number = t.rent_amount ?? 0
+          const rentDueDay: number = t.rent_due_day ?? 1
+          const dayOfMonth = new Date().getDate()
+          const includesNextMonth = dayOfMonth >= 15 && untilDue <= 20 && rentAmount > 0 && balanceDue >= rentAmount * 0.8
+          const totalAmount = includesNextMonth
+            ? Math.round((balanceDue + rentAmount) * 100) / 100
+            : balanceDue
+          const maxInstallments = includesNextMonth ? 6 : (balanceDue >= rentAmount * 1.5 ? 4 : balanceDue >= rentAmount * 0.8 ? 3 : 2)
+          const offerToken = generateShortCode()
+          const offerUrl = `${process.env.NEXT_PUBLIC_APP_URL}/pay/offer/${offerToken}`
+          const expiresAt = new Date(Date.now() + 7 * 86_400_000).toISOString()
+          const firstName = t.name.split(" ")[0]
+          const smsBody = includesNextMonth
+            ? `Hi ${firstName}, your PM is splitting your $${totalAmount.toLocaleString()} balance (past due + upcoming rent) into up to ${maxInstallments} payments. Choose your plan: ${offerUrl} Reply STOP to opt out.`
+            : `Hi ${firstName}, your PM is offering to split your $${totalAmount.toLocaleString()} past-due balance into installments. Choose your plan: ${offerUrl} Reply STOP to opt out.`
+          const offerSnapshot = {
+            ...snapshot,
+            offer_token: offerToken,
+            total_amount: totalAmount,
+            max_installments: maxInstallments,
+            min_installments: 2,
+            includes_next_month: includesNextMonth,
+            rent_due_day: rentDueDay,
+            expires_at: expiresAt,
+          }
+          await sendAndLog(supabase, t, "split_pay_offer", smsBody, offerSnapshot, autoMode, results)
+          results.installment_offers++
+        }
       } else {
-        const firstName = t.name.split(" ")[0]
-        const dayText = risk.days_past_due > 0
-          ? ` is ${risk.days_past_due} day${risk.days_past_due === 1 ? "" : "s"} past due`
-          : " is still outstanding"
-        await sendAndLog(
-          supabase, t, "current_balance_reminder",
-          `Hi ${firstName}, your balance of $${(t.balance_due ?? 0).toLocaleString()}${dayText}. Please contact your property manager or reply here to arrange payment. Reply STOP to opt out.`,
-          snapshot, autoMode, results
-        )
+        // No Stripe — plain balance reminder
+        const alreadySent = await recentlySent(supabase, t.id, "current_balance_reminder", 14)
+        if (alreadySent) {
+          results.skipped_dedup++
+        } else {
+          const firstName = t.name.split(" ")[0]
+          const dayText = risk.days_past_due > 0
+            ? ` is ${risk.days_past_due} day${risk.days_past_due === 1 ? "" : "s"} past due`
+            : " is still outstanding"
+          await sendAndLog(
+            supabase, t, "current_balance_reminder",
+            `Hi ${firstName}, your balance of $${(t.balance_due ?? 0).toLocaleString()}${dayText}. Please contact your property manager or reply here to arrange payment. Reply STOP to opt out.`,
+            snapshot, autoMode, results
+          )
+        }
       }
       continue
     }

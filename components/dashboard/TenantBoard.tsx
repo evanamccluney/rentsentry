@@ -382,7 +382,7 @@ function computeScheduledDate(t: Tenant): ScheduledAction | null {
     const todayRun = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 10, 0, 0))
     const sendDate = todayRun > now ? todayRun : new Date(todayRun.getTime() + 86_400_000)
     return {
-      what: t.tier === "payment_plan" ? "Payment plan offer" : "Payment reminder",
+      what: t.tier === "payment_plan" ? "Payment plan offer" : "Balance reminder",
       date: sendDate,
       reason: `$${(t.balance_due ?? 0).toLocaleString()} outstanding`,
     }
