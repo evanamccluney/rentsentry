@@ -78,6 +78,7 @@ const PM_ALERT_OPTIONS: { key: string; label: string; desc: string }[] = [
   { key: "installment_missed",label: "Installment payment missed",      desc: "Tenant on a payment plan misses a due installment" },
   { key: "autopay_declined",  label: "Autopay payment declined",        desc: "Stripe or ACH payment fails for any tenant" },
   { key: "tenant_response",   label: "Tenant replies to SMS",           desc: "Tenant responds to an automated or manual message" },
+  { key: "plan_sent",         label: "Payment plan offer sent",         desc: "A split-pay offer was sent to a tenant (manually or auto)" },
 ]
 
 const PRESET_OPTIONS: Array<{ value: EscalationPreset; label: string; desc: string; color: string }> = [
@@ -152,7 +153,7 @@ function SettingsPageInner() {
   const [timezone, setTimezone] = useState("America/New_York")
   const [notificationEmail, setNotificationEmail] = useState("")
   const [defaultRentDueDay, setDefaultRentDueDay] = useState(1)
-  const [pmAlertTriggers, setPmAlertTriggers] = useState<string[]>(["pay_or_quit", "legal", "installment_missed", "autopay_declined"])
+  const [pmAlertTriggers, setPmAlertTriggers] = useState<string[]>(["pay_or_quit", "legal", "installment_missed", "autopay_declined", "tenant_response", "plan_sent"])
   const [pmPhone, setPmPhone] = useState("")
   const [pmAlertsEnabled, setPmAlertsEnabled] = useState(false)
   const [lateFeePercent, setLateFeePercent] = useState("5")
@@ -236,7 +237,7 @@ function SettingsPageInner() {
           timezone: data.timezone ?? "America/New_York",
           notificationEmail: data.notification_email ?? "",
           defaultRentDueDay: data.default_rent_due_day ?? 1,
-          pmAlertTriggers: Array.isArray(data.pm_alert_triggers) ? data.pm_alert_triggers : ["pay_or_quit", "legal", "installment_missed", "autopay_declined"],
+          pmAlertTriggers: Array.isArray(data.pm_alert_triggers) ? data.pm_alert_triggers : ["pay_or_quit", "legal", "installment_missed", "autopay_declined", "tenant_response", "plan_sent"],
           pmPhone: data.pm_phone ?? "",
           pmAlertsEnabled: data.pm_alerts_enabled ?? false,
           lateFeePercent: String(data.late_fee_percent ?? 5),
@@ -275,7 +276,7 @@ function SettingsPageInner() {
           timezone: "America/New_York",
           notificationEmail: "",
           defaultRentDueDay: 1,
-          pmAlertTriggers: ["pay_or_quit", "legal", "installment_missed", "autopay_declined"],
+          pmAlertTriggers: ["pay_or_quit", "legal", "installment_missed", "autopay_declined", "tenant_response", "plan_sent"],
           pmPhone: "",
           pmAlertsEnabled: false,
           lateFeePercent: "5",

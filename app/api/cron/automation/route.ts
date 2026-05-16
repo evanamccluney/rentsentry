@@ -53,6 +53,7 @@ import { scoreTenant } from "@/lib/risk-engine"
 import { sendTenantEmail } from "@/lib/email"
 import { profileToEscalationRules, type EscalationRules } from "@/lib/escalation-rules"
 import { generateShortCode } from "@/lib/short-link"
+import { normalizePhone } from "@/lib/phone"
 
 const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
 const FROM_NUMBER = process.env.TWILIO_PHONE_NUMBER!
@@ -181,7 +182,7 @@ export async function GET(req: NextRequest) {
   const userIds = [...new Set(tenants.map((t: { user_id: string }) => t.user_id))]
   const { data: profiles } = await supabase
     .from("profiles")
-    .select("id, auto_mode, auto_payment_plan_offers, pm_phone, pm_alerts_enabled, escalation_preset, reminder_day, payment_plan_day, pay_or_quit_day, cfk_review_day, attorney_review_day, repeat_offender_accelerator_days, pre_due_risk_outreach_enabled, pre_due_risk_review_days_before_due, require_attorney_before_notice, payment_plan_before_notice, custom_escalation_notes, stripe_account_id, pm_display_name")
+    .select("id, auto_mode, auto_payment_plan_offers, pm_phone, pm_alerts_enabled, pm_alert_triggers, escalation_preset, reminder_day, payment_plan_day, pay_or_quit_day, cfk_review_day, attorney_review_day, repeat_offender_accelerator_days, pre_due_risk_outreach_enabled, pre_due_risk_review_days_before_due, require_attorney_before_notice, payment_plan_before_notice, custom_escalation_notes, stripe_account_id, pm_display_name")
     .in("id", userIds)
 
   const autoModeByUser = new Map<string, boolean>(
@@ -198,6 +199,13 @@ export async function GET(req: NextRequest) {
   )
   const pmDisplayNameByUser = new Map<string, string | null>(
     (profiles ?? []).map((p: { id: string; pm_display_name?: string | null }) => [p.id, p.pm_display_name?.trim() || null])
+  )
+  const pmAlertsByUser = new Map<string, { phone: string | null; enabled: boolean; triggers: string[] }>(
+    (profiles ?? []).map((p: { id: string; pm_phone?: string | null; pm_alerts_enabled?: boolean | null; pm_alert_triggers?: unknown }) => [p.id, {
+      phone: p.pm_phone ?? null,
+      enabled: p.pm_alerts_enabled ?? false,
+      triggers: Array.isArray(p.pm_alert_triggers) ? p.pm_alert_triggers : ["pay_or_quit", "legal", "installment_missed", "autopay_declined", "tenant_response", "plan_sent"],
+    }])
   )
 
   const results = {
@@ -394,6 +402,21 @@ export async function GET(req: NextRequest) {
           }
           await sendAndLog(supabase, t, "split_pay_offer", smsBody, offerSnapshot, autoMode, results)
           results.installment_offers++
+
+          // PM alert for plan_sent trigger
+          const pmAlert = pmAlertsByUser.get(t.user_id)
+          if (pmAlert?.enabled && pmAlert.triggers.includes("plan_sent") && pmAlert.phone) {
+            const pmPhoneNorm = normalizePhone(pmAlert.phone)
+            if (pmPhoneNorm) {
+              try {
+                await twilioClient.messages.create({
+                  from: FROM_NUMBER,
+                  to: pmPhoneNorm,
+                  body: `RentSentry: Payment plan offer auto-sent to ${t.name.split(" ")[0]} — $${totalAmount.toLocaleString()} in up to ${maxInstallments} installments${includesNextMonth ? " (incl. next month)" : ""}. View: ${process.env.NEXT_PUBLIC_APP_URL}/dashboard/tenants/${t.id}`,
+                })
+              } catch (e) { console.error(`cron: plan_sent PM alert failed — tenant ${t.id}:`, e) }
+            }
+          }
         }
       } else {
         // No Stripe — plain balance reminder

@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
 
     const { data: profile } = await supabase
       .from("profiles")
-      .select("pm_display_name")
+      .select("pm_display_name, pm_phone, pm_alerts_enabled, pm_alert_triggers")
       .eq("id", user.id)
       .single()
     const pmName = profile?.pm_display_name?.trim() || null
@@ -135,6 +135,26 @@ export async function POST(req: NextRequest) {
         .from("tenants").select("email").eq("id", tenantId).single()
       if (tenantRecord?.email) {
         await sendTenantEmail(tenantRecord.email, type, name || "Resident")
+      }
+    }
+
+    // PM SMS alert for plan_sent trigger
+    const pmTriggers: string[] = Array.isArray(profile?.pm_alert_triggers)
+      ? profile.pm_alert_triggers
+      : ["pay_or_quit", "legal", "installment_missed", "autopay_declined", "tenant_response", "plan_sent"]
+    if (profile?.pm_alerts_enabled && pmTriggers.includes("plan_sent") && profile?.pm_phone) {
+      const pmPhoneNorm = normalizePhone(profile.pm_phone)
+      if (pmPhoneNorm) {
+        try {
+          const { default: twilio } = await import("twilio")
+          const tw = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
+          const firstName = (name || "Resident").split(" ")[0]
+          await tw.messages.create({
+            from: process.env.TWILIO_PHONE_NUMBER!,
+            to: pmPhoneNorm,
+            body: `RentSentry: Payment plan offer sent to ${firstName} — $${offer.totalAmount.toLocaleString()} in up to ${offer.maxInstallments} installments${offer.includesNextMonth ? " (incl. next month)" : ""}. View: ${process.env.NEXT_PUBLIC_APP_URL}/dashboard/tenants/${tenantId}`,
+          })
+        } catch (e) { console.error("interventions: plan_sent PM alert failed:", e) }
       }
     }
 

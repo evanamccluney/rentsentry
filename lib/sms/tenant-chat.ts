@@ -70,7 +70,7 @@ export async function handleTenantReply(supabase: any, tenant: TenantRow, messag
 
   const { data: profileCore, error: profileCoreError } = await supabase
     .from("profiles")
-    .select("pm_display_name, stripe_account_id")
+    .select("pm_display_name, stripe_account_id, pm_phone, pm_alerts_enabled, pm_alert_triggers")
     .eq("id", tenant.user_id)
     .single()
   if (profileCoreError) console.error("sms-webhook profile-core error:", profileCoreError.message)
@@ -401,6 +401,46 @@ Rules:
       sent_at: now.toISOString(),
       notes: `[AI-extracted from tenant reply] ${situationSummary}`,
     })
+  }
+
+  // PM SMS alert on tenant reply
+  const pmTriggers: string[] = Array.isArray(profileCore?.pm_alert_triggers)
+    ? profileCore.pm_alert_triggers
+    : ["pay_or_quit", "legal", "installment_missed", "autopay_declined", "tenant_response", "plan_sent"]
+  if (profileCore?.pm_alerts_enabled && pmTriggers.includes("tenant_response") && profileCore?.pm_phone) {
+    const { normalizePhone } = await import("@/lib/phone")
+    const pmPhone = normalizePhone(profileCore.pm_phone)
+    if (pmPhone) {
+      // Dedup: don't spam PM if tenant sends multiple messages in quick succession (1h window)
+      const oneHourAgo = new Date(Date.now() - 3_600_000).toISOString()
+      const { data: recentAlert } = await supabase
+        .from("interventions")
+        .select("id")
+        .eq("tenant_id", tenant.id)
+        .eq("type", "pm_alert_tenant_reply")
+        .gte("sent_at", oneHourAgo)
+        .limit(1)
+      if ((recentAlert?.length ?? 0) === 0) {
+        try {
+          const twilio = (await import("twilio")).default
+          const tw = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
+          const truncated = messageBody.length > 80 ? messageBody.slice(0, 80) + "…" : messageBody
+          await tw.messages.create({
+            from: process.env.TWILIO_PHONE_NUMBER!,
+            to: pmPhone,
+            body: `RentSentry: ${tenant.name} (Unit ${tenant.unit}) replied — "${truncated}". View: ${APP_URL}/dashboard/tenants/${tenant.id}`,
+          })
+          await supabase.from("interventions").insert({
+            tenant_id: tenant.id,
+            user_id: tenant.user_id,
+            type: "pm_alert_tenant_reply",
+            status: "sent",
+            sent_at: now.toISOString(),
+            notes: `PM alerted of tenant reply: "${messageBody.slice(0, 200)}"`,
+          })
+        } catch (e) { console.error("tenant-chat: PM reply alert SMS failed:", e) }
+      }
+    }
   }
 
   return twiml(finalMessage)
