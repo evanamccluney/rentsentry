@@ -471,15 +471,17 @@ function formatSentTime(iso: string): string {
 function Countdown({ targetDate }: { targetDate: Date }) {
   const [msLeft, setMsLeft] = useState(() => targetDate.getTime() - Date.now())
   useEffect(() => {
-    const id = setInterval(() => setMsLeft(targetDate.getTime() - Date.now()), 30_000)
+    const id = setInterval(() => setMsLeft(targetDate.getTime() - Date.now()), 1_000)
     return () => clearInterval(id)
   }, [targetDate])
   if (msLeft <= 0) return <span>now</span>
   const h = Math.floor(msLeft / 3_600_000)
   const m = Math.floor((msLeft % 3_600_000) / 60_000)
+  const s = Math.floor((msLeft % 60_000) / 1_000)
   if (h >= 24) { const d = Math.floor(h / 24); return <span>in {d}d</span> }
-  if (h > 0) return <span>in {h}h {m}m</span>
-  return <span>in {m}m</span>
+  if (h > 0) return <span>in {h}h {m}m {s}s</span>
+  if (m > 0) return <span>in {m}m {s}s</span>
+  return <span>in {s}s</span>
 }
 
 function getSystemMessage(
