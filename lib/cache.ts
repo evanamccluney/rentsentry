@@ -53,7 +53,8 @@ export const getCachedProfile = (userId: string) =>
       escalation_preset, reminder_day, payment_plan_day, pay_or_quit_day,
       cfk_review_day, attorney_review_day, repeat_offender_accelerator_days,
       pre_due_risk_outreach_enabled, pre_due_risk_review_days_before_due,
-      require_attorney_before_notice, payment_plan_before_notice, custom_escalation_notes
+      require_attorney_before_notice, payment_plan_before_notice, custom_escalation_notes,
+      stripe_account_id, pm_phone
     `)
     .eq("id", userId)
     .single()
