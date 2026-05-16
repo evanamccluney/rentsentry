@@ -3,7 +3,7 @@ import { getCachedProfile, getCachedTenants } from "@/lib/cache"
 import { scoreTenant } from "@/lib/risk-engine"
 import { profileToEscalationRules } from "@/lib/escalation-rules"
 import Link from "next/link"
-import { ArrowRight, TrendingUp, DollarSign, Users, AlertTriangle, CheckCircle2, Clock, RefreshCw } from "lucide-react"
+import { ArrowRight, Users, AlertTriangle, CheckCircle2, Clock, RefreshCw } from "lucide-react"
 import SetupChecklist from "@/components/dashboard/SetupChecklist"
 import TodayBriefing from "@/components/dashboard/TodayBriefing"
 import CashFlowForecast from "@/components/dashboard/CashFlowForecast"
@@ -212,13 +212,13 @@ export default async function DashboardPage() {
           <h1 className="text-2xl font-bold text-white">Portfolio Overview</h1>
           <p className="text-[#6b7280] text-sm mt-1">Real-time revenue risk across your properties</p>
         </div>
-        <div className="bg-[#111827] border border-white/10 rounded-2xl p-12 text-center">
-          <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center mx-auto mb-4">
-            <Users size={20} className="text-blue-400" />
+        <div className="bg-[#111113] border border-[#27272a] rounded-xl p-12 text-center">
+          <div className="w-11 h-11 rounded-full bg-[#6366f1]/10 flex items-center justify-center mx-auto mb-4">
+            <Users size={18} className="text-[#818cf8]" />
           </div>
-          <p className="text-white font-semibold mb-2">No tenants yet</p>
-          <p className="text-[#6b7280] text-sm mb-6 max-w-sm mx-auto">Add a property and upload your first rent roll to start protecting revenue.</p>
-          <Link href="/dashboard/upload" className="inline-flex items-center gap-2 bg-blue-500 hover:bg-blue-600 text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition-colors">
+          <p className="text-[#fafafa] font-semibold mb-2">No tenants yet</p>
+          <p className="text-[#52525b] text-sm mb-6 max-w-sm mx-auto">Add a property and upload your first rent roll to start protecting revenue.</p>
+          <Link href="/dashboard/upload" className="inline-flex items-center gap-2 bg-[#6366f1] hover:bg-[#818cf8] text-white font-semibold px-5 py-2.5 rounded-lg text-sm transition-colors">
             Upload Rent Roll <ArrowRight size={14} />
           </Link>
         </div>
@@ -229,15 +229,23 @@ export default async function DashboardPage() {
   return (
     <div>
       {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-white">Portfolio Overview</h1>
-        <p className="text-[#6b7280] text-sm mt-1">
-          {total} active tenants ·{" "}
-          {atRisk > 0
-            ? <span className="text-red-400">{atRisk} need action</span>
-            : <span className="text-emerald-400">all tenants in good standing</span>
-          }
-        </p>
+      <div className="flex items-center justify-between mb-5">
+        <div>
+          <h1 className="font-heading text-xl font-bold text-[#fafafa] tracking-tight">Portfolio Overview</h1>
+          <p className="text-[#3f3f46] text-xs mt-0.5">
+            {total} tenants ·{" "}
+            {atRisk > 0
+              ? <span className="text-red-400">{atRisk} need action</span>
+              : <span className="text-emerald-500">all in good standing</span>
+            }
+          </p>
+        </div>
+        <Link
+          href="/dashboard/tenants"
+          className="text-xs text-[#52525b] hover:text-[#a1a1aa] transition-colors flex items-center gap-1"
+        >
+          All tenants <ArrowRight size={11} />
+        </Link>
       </div>
 
       <SetupChecklist steps={checklistSteps} completedCount={completedCount} />
@@ -266,45 +274,44 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      {/* Stat strip */}
+      <div className="flex items-stretch border border-[#27272a] rounded-xl overflow-hidden mb-8">
         {[
           {
-            label: "Monthly Rent Roll",
+            label: "Monthly Rent",
             value: `$${monthlyRent.toLocaleString()}`,
-            sub: `${total} tenants · $${Math.round(monthlyRent / Math.max(total, 1)).toLocaleString()} avg`,
-            icon: <TrendingUp size={16} className="text-emerald-400" />,
-            color: "text-white",
+            sub: `${total} tenants`,
+            dot: null,
+          },
+          {
+            label: "Outstanding",
+            value: `$${totalOwed.toLocaleString()}`,
+            sub: totalOwed > 0 ? `${tenants.filter(t => (t.balance_due || 0) > 0).length} tenants owe` : "all clear",
+            dot: totalOwed > 0 ? "bg-amber-400" : "bg-emerald-500",
           },
           {
             label: "Revenue at Risk",
             value: `$${revenueAtRisk.toLocaleString()}`,
-            sub: revenueAtRisk > 0 ? `${revenueAtRiskPct}% of rent roll` : "no critical-tier tenants",
-            icon: <AlertTriangle size={16} className="text-red-400" />,
-            color: revenueAtRisk > 0 ? "text-red-400" : "text-emerald-400",
-          },
-          {
-            label: "Outstanding Balance",
-            value: `$${totalOwed.toLocaleString()}`,
-            sub: totalOwed > 0 ? `across ${tenants.filter(t => (t.balance_due || 0) > 0).length} tenants` : "all balances clear",
-            icon: <DollarSign size={16} className="text-orange-400" />,
-            color: totalOwed > 0 ? "text-orange-400" : "text-white",
+            sub: revenueAtRisk > 0 ? `${revenueAtRiskPct}% of roll` : "no critical tenants",
+            dot: revenueAtRisk > 0 ? "bg-red-500" : "bg-emerald-500",
           },
           {
             label: "Collection Rate",
             value: `${collectionRate}%`,
-            sub: `${paidUp} of ${total} paid up`,
-            icon: <CheckCircle2 size={16} className="text-emerald-400" />,
-            color: collectionRate >= 90 ? "text-emerald-400" : collectionRate >= 75 ? "text-yellow-400" : "text-red-400",
+            sub: `${paidUp} of ${total} paid`,
+            dot: collectionRate >= 90 ? "bg-emerald-500" : collectionRate >= 75 ? "bg-amber-400" : "bg-red-500",
           },
-        ].map(({ label, value, sub, icon, color }) => (
-          <div key={label} className="bg-[#111827] border border-white/10 rounded-2xl p-5">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-[#4b5563] text-xs uppercase tracking-wide">{label}</span>
-              {icon}
+        ].map(({ label, value, sub, dot }, i) => (
+          <div
+            key={label}
+            className={`flex-1 px-6 py-5 bg-[#111113] ${i !== 0 ? "border-l border-[#27272a]" : ""}`}
+          >
+            <div className="text-[#52525b] text-xs mb-2">{label}</div>
+            <div className="text-[#fafafa] text-2xl font-bold tabular-nums tracking-tight">{value}</div>
+            <div className="flex items-center gap-1.5 mt-1.5">
+              {dot && <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dot}`} />}
+              <span className="text-[#3f3f46] text-xs">{sub}</span>
             </div>
-            <div className={`text-2xl font-bold tabular-nums ${color}`}>{value}</div>
-            <div className="text-[#6b7280] text-xs mt-1.5">{sub}</div>
           </div>
         ))}
       </div>
@@ -312,7 +319,7 @@ export default async function DashboardPage() {
       {/* Risk breakdown + leases expiring */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-5">
         {/* Risk breakdown */}
-        <div className="lg:col-span-2 bg-[#111827] border border-white/10 rounded-2xl p-5">
+        <div className="lg:col-span-2 bg-[#111113] border border-[#27272a] rounded-xl p-5">
           <h2 className="text-white font-semibold text-sm mb-4">Portfolio Risk Breakdown</h2>
           <div className="flex h-2.5 rounded-full overflow-hidden gap-px mb-4">
             {["legal", "pay_or_quit", "cash_for_keys", "payment_plan", "reminder", "watch", "healthy"].map(tier => {
@@ -343,7 +350,7 @@ export default async function DashboardPage() {
         </div>
 
         {/* Leases expiring */}
-        <div className="bg-[#111827] border border-white/10 rounded-2xl p-5">
+        <div className="bg-[#111113] border border-[#27272a] rounded-xl p-5">
           <h2 className="text-white font-semibold text-sm mb-4">Leases Expiring Soon</h2>
           {expiringLeases.length === 0 ? (
             <div className="flex items-center gap-2 text-[#4b5563] text-sm">
@@ -378,7 +385,7 @@ export default async function DashboardPage() {
       {/* Needs action + recent activity */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Needs action */}
-        <div className="bg-[#111827] border border-white/10 rounded-2xl p-5">
+        <div className="bg-[#111113] border border-[#27272a] rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-white font-semibold text-sm">Needs Action</h2>
             <Link href="/dashboard/tenants" className="text-[#4b5563] hover:text-white text-xs transition-colors flex items-center gap-1">
@@ -418,7 +425,7 @@ export default async function DashboardPage() {
         </div>
 
         {/* Recent activity */}
-        <div className="bg-[#111827] border border-white/10 rounded-2xl p-5">
+        <div className="bg-[#111113] border border-[#27272a] rounded-xl p-5">
           <h2 className="text-white font-semibold text-sm mb-4">Recent Activity</h2>
           {!recentActivity || recentActivity.length === 0 ? (
             <div className="flex items-center gap-2 text-[#4b5563] text-sm">

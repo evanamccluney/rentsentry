@@ -4,6 +4,7 @@ import { useRouter, useParams } from "next/navigation"
 import { parseCSV, detectColumns, mapRow, type MappedTenant } from "@/lib/csv-parser"
 import { scoreTenant } from "@/lib/risk-engine"
 import { createClient } from "@/lib/supabase/client"
+import { inferDelinquencyStartDate } from "@/lib/delinquency"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
@@ -88,29 +89,40 @@ export default function PropertyUploadPage() {
     const batchSize = 50
     let inserted = 0
     for (let i = 0; i < preview.length; i += batchSize) {
-      const batch = preview.slice(i, i + batchSize).map((t, idx) => ({
-        property_id: propertyId,
-        user_id: user.id,
-        unit: t.unit || `Unit ${i + idx + 1}`,
-        name: t.name || "Unknown",
-        email: t.email,
-        phone: t.phone,
-        rent_amount: t.rent_amount,
-        lease_start: t.lease_start || null,
-        lease_end: t.lease_end || null,
-        payment_method: t.payment_method,
-        card_expiry: t.card_expiry || null,
-        days_late_avg: t.days_late_avg,
-        late_payment_count: t.late_payment_count,
-        previous_delinquency: t.previous_delinquency,
-        balance_due: t.balance_due,
-        last_payment_date: t.last_payment_date || null,
-        move_in_date: t.move_in_date || null,
-        move_out_date: t.move_out_date || null,
-        risk_score: t.risk_score,
-        risk_reasons: t.risk_reasons,
-        status: t.move_out_date ? "vacated" : "active",
-      }))
+      const batch = preview.slice(i, i + batchSize).map((t, idx) => {
+        return {
+          property_id: propertyId,
+          user_id: user.id,
+          unit: t.unit || `Unit ${i + idx + 1}`,
+          name: t.name || "Unknown",
+          email: t.email,
+          phone: t.phone,
+          rent_amount: t.rent_amount,
+          lease_start: t.lease_start || null,
+          lease_end: t.lease_end || null,
+          payment_method: t.payment_method,
+          card_expiry: t.card_expiry || null,
+          days_late_avg: t.days_late_avg,
+          late_payment_count: t.late_payment_count,
+          previous_delinquency: t.previous_delinquency,
+          balance_due: t.balance_due,
+          last_payment_date: t.last_payment_date || null,
+          delinquency_start_date: inferDelinquencyStartDate({
+            balanceDue: t.balance_due,
+            rentDueDay: t.rent_due_day,
+            lastPaymentDate: t.last_payment_date,
+            daysPastDue: t.days_past_due,
+          }),
+          intake_status: "normal",
+          intake_action: null,
+          auto_contact_approved: true,
+          move_in_date: t.move_in_date || null,
+          move_out_date: t.move_out_date || null,
+          risk_score: t.risk_score,
+          risk_reasons: t.risk_reasons,
+          status: t.move_out_date ? "vacated" : "active",
+        }
+      })
       const { error } = await supabase.from("tenants").insert(batch)
       if (!error) inserted += batch.length
     }

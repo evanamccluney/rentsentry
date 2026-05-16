@@ -23,6 +23,8 @@ interface TenantData {
   lease_start: string
   lease_end: string
   last_payment_date: string
+  delinquency_start_date: string
+  intake_action: string
   days_late_avg: string
   late_payment_count: string
   previous_delinquency: boolean
@@ -33,6 +35,7 @@ const EMPTY: TenantData = {
   rent_amount: "", balance_due: "0", rent_due_day: "1",
   payment_method: "unknown", card_expiry: "", lease_start: "",
   lease_end: "", last_payment_date: "",
+  delinquency_start_date: "", intake_action: "manual_review",
   days_late_avg: "0", late_payment_count: "0", previous_delinquency: false,
 }
 
@@ -48,6 +51,20 @@ export default function TenantFormModal({ mode, properties, initial, onClose }: 
   const [form, setForm] = useState<TenantData>({ ...EMPTY, ...initial })
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const hasExistingBalance = (parseFloat(form.balance_due) || 0) > 0
+
+  const balanceHint = (() => {
+    if (!hasExistingBalance || mode !== "add" || !form.last_payment_date) return null
+    const lastPay = new Date(form.last_payment_date + "T00:00:00")
+    if (isNaN(lastPay.getTime())) return null
+    const monthsSinceLastPayment = Math.round((Date.now() - lastPay.getTime()) / (30.44 * 86_400_000))
+    if (monthsSinceLastPayment < 2) return null
+    const rentAmount = parseFloat(form.rent_amount) || 0
+    const balanceDue = parseFloat(form.balance_due) || 0
+    const monthsEntered = rentAmount > 0 ? balanceDue / rentAmount : 0
+    if (monthsSinceLastPayment <= Math.ceil(monthsEntered)) return null
+    return { monthsSinceLastPayment, monthsEntered: Math.round(monthsEntered * 10) / 10 }
+  })()
 
   async function handleDelete() {
     if (!confirmDelete) { setConfirmDelete(true); return }
@@ -93,9 +110,12 @@ export default function TenantFormModal({ mode, properties, initial, onClose }: 
       lease_start: form.lease_start || null,
       lease_end: form.lease_end || null,
       last_payment_date: form.last_payment_date || null,
+      delinquency_start_date: form.delinquency_start_date || null,
+      intake_action: hasExistingBalance ? form.intake_action : null,
       days_late_avg: parseFloat(form.days_late_avg) || 0,
       late_payment_count: parseInt(form.late_payment_count) || 0,
       previous_delinquency: form.previous_delinquency,
+      source: "manual",
       status: "active",
       user_id: user.id,
     }
@@ -206,6 +226,40 @@ export default function TenantFormModal({ mode, properties, initial, onClose }: 
                   <Field label="Card Expiry (MM/YY)" value={form.card_expiry} onChange={v => set("card_expiry", v)} placeholder="08/26" />
                 </div>
                 <Field label="Last Payment Date" value={form.last_payment_date} onChange={v => set("last_payment_date", v)} type="date" />
+                {hasExistingBalance && mode === "add" && (
+                  <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-4">
+                    <div className="text-amber-300 text-sm font-semibold mb-1">Existing balance review</div>
+                    <p className="text-[#6b7280] text-xs leading-relaxed mb-3">
+                      This tenant will be added to review before Auto Mode contacts them.
+                    </p>
+                    <Field label="Delinquency Start Date" value={form.delinquency_start_date} onChange={v => set("delinquency_start_date", v)} type="date" />
+                    {balanceHint && (
+                      <div className="mt-2 text-xs text-amber-200/80 bg-amber-500/[0.06] rounded-lg px-3 py-2 border border-amber-500/15 leading-relaxed">
+                        Last payment was <strong>{balanceHint.monthsSinceLastPayment} months</strong> ago but you entered <strong>{balanceHint.monthsEntered} month{balanceHint.monthsEntered !== 1 ? "s" : ""}</strong> of balance — they may owe more. Double-check the balance amount before saving.
+                      </div>
+                    )}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3">
+                      {[
+                        { value: "manual_review", label: "Review first", desc: "Default. No tenant auto-text until approved." },
+                        { value: "no_contact", label: "No contact yet", desc: "Track balance, keep automation blocked." },
+                      ].map(option => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => set("intake_action", option.value)}
+                          className={`text-left rounded-xl border px-3 py-2.5 transition-colors ${
+                            form.intake_action === option.value
+                              ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
+                              : "border-white/10 bg-white/[0.02] text-[#6b7280] hover:text-[#9ca3af]"
+                          }`}
+                        >
+                          <div className="text-xs font-semibold">{option.label}</div>
+                          <div className="text-[10px] opacity-75 mt-0.5 leading-snug">{option.desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 

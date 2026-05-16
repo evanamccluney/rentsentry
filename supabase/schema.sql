@@ -40,6 +40,10 @@ create table if not exists tenants (
   local_protection_notes text,         -- local court/tenant-protection notes for AI + audit
   resolution_status text default null, -- 'paid', 'payment_plan', 'eviction_filed', 'vacated', 'collections'
   last_payment_date date,
+  delinquency_start_date date,
+  intake_status text default 'normal', -- 'normal', 'needs_review', 'approved', 'no_contact'
+  intake_action text,                  -- 'manual_review', 'no_contact', future action preference
+  auto_contact_approved boolean default true,
   utility_billed boolean default false,
   created_at timestamptz default now(),
   updated_at timestamptz default now()

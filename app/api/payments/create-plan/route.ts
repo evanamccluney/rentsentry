@@ -44,6 +44,7 @@ export async function POST(req: NextRequest) {
   const first = installments[0]
   const amountCents = Math.round(first.amount * 100)
   const feeCents = Math.round(amountCents * FEE_RATE)
+  const planType = "arrears"
 
   const session = await stripe.checkout.sessions.create({
     mode: "payment",
@@ -58,8 +59,8 @@ export async function POST(req: NextRequest) {
         price_data: {
           currency: "usd",
           product_data: {
-            name: `Rent Payment — Unit ${tenant.unit} (Installment 1 of ${installments.length})`,
-            description: `Payment plan installment 1 of ${installments.length}. You may also pay by check — contact your landlord for details.`,
+            name: `Past-due Rent Payment - Unit ${tenant.unit} (Installment 1 of ${installments.length})`,
+            description: `Arrears payment plan installment 1 of ${installments.length}. You may also pay by check - contact your landlord for details.`,
           },
           unit_amount: amountCents,
         },
@@ -77,6 +78,7 @@ export async function POST(req: NextRequest) {
     metadata: {
       tenant_id: tenant.id,
       landlord_id: user.id,
+      plan_type: planType,
       installment_index: "0",
       installment_total: installments.length.toString(),
       rent_amount_cents: amountCents.toString(),
@@ -102,7 +104,9 @@ export async function POST(req: NextRequest) {
     sent_at: new Date().toISOString(),
     snapshot: {
       installments,
+      plan_type: planType,
       total_plan_amount: totalAmount,
+      balance_due_at_creation: tenant.balance_due ?? 0,
       frequency,
       first_checkout_url: session.url,
     },
@@ -118,7 +122,7 @@ export async function POST(req: NextRequest) {
       svc,
       tenant.id,
       tenant.phone,
-      `Hi ${tenant.name}, your ${profile.pm_display_name || "property manager"} set up a ${installments.length}-payment plan for Unit ${tenant.unit}. Pay installment 1 ($${first.amount.toLocaleString()}) now: ${session.url} You may also pay by check. Reply STOP to opt out.`
+      `Hi ${tenant.name}, your ${profile.pm_display_name || "property manager"} set up a ${installments.length}-payment plan for your $${(tenant.balance_due ?? totalAmount).toLocaleString()} past-due balance on Unit ${tenant.unit}. Pay installment 1 ($${first.amount.toLocaleString()}) now: ${session.url} You may also pay by check. Reply STOP to opt out.`
     )
   }
 
@@ -147,7 +151,7 @@ export async function POST(req: NextRequest) {
           financial_connections: { permissions: ["payment_method"] },
         },
       },
-      metadata: { tenant_id: tenant.id, landlord_id: user.id },
+      metadata: { tenant_id: tenant.id, landlord_id: user.id, plan_type: planType },
       success_url: `${process.env.NEXT_PUBLIC_APP_URL}/pay/autopay-confirmed`,
       cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/pay/cancelled`,
     })

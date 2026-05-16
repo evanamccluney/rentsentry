@@ -5,7 +5,8 @@ export const PENDING_PHONE_COOKIE = "rs_pending_phone"
 export const SESSION_DAYS = 7
 
 async function hmacHex(data: string): Promise<string> {
-  const secret = process.env.TENANT_SESSION_SECRET ?? "rentsentry-tenant-dev-secret"
+  const secret = process.env.TENANT_SESSION_SECRET
+  if (!secret) throw new Error("TENANT_SESSION_SECRET env var is not set")
   const enc = new TextEncoder()
   const key = await crypto.subtle.importKey(
     "raw", enc.encode(secret),

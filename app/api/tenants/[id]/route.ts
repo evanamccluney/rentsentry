@@ -17,7 +17,7 @@ export async function PATCH(
   // Only allow updating owned tenants
   const { data: existing } = await supabase
     .from("tenants")
-    .select("id")
+    .select("id, balance_due")
     .eq("id", id)
     .eq("user_id", user.id)
     .single()
@@ -30,6 +30,7 @@ export async function PATCH(
     "payment_method", "card_expiry",
     "lease_start", "lease_end", "last_payment_date",
     "days_late_avg", "late_payment_count", "previous_delinquency",
+    "delinquency_start_date", "intake_status", "intake_action", "auto_contact_approved",
     "notes", "status",
   ]
 
@@ -39,6 +40,20 @@ export async function PATCH(
       patch[key] = key === "phone" && typeof body[key] === "string"
         ? (normalizePhone(body[key]) ?? body[key] ?? null)
         : body[key]
+    }
+  }
+
+  if ("balance_due" in body) {
+    const nextBalance = parseFloat(String(body.balance_due)) || 0
+    const previousBalance = Number(existing.balance_due ?? 0)
+    if (nextBalance <= 0) {
+      patch.intake_status = "normal"
+      patch.intake_action = null
+      patch.auto_contact_approved = true
+    } else if (previousBalance <= 0 && !("auto_contact_approved" in body) && body.source === "manual") {
+      patch.intake_status = "needs_review"
+      patch.intake_action = "manual_review"
+      patch.auto_contact_approved = false
     }
   }
 

@@ -17,6 +17,8 @@ import { Resend } from "resend"
 import { sendTenantSms } from "@/lib/sms"
 import { normalizePhone } from "@/lib/phone"
 
+import { RESEND_FROM } from "@/lib/resend-from"
+
 const resend = new Resend(process.env.RESEND_API_KEY)
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -71,7 +73,7 @@ async function sendAndLog(
   try {
     if (tenant.email) {
       await resend.emails.send({
-        from: "RentSentry <onboarding@resend.dev>",
+        from: RESEND_FROM,
         to: tenant.email,
         subject,
         html: `
@@ -98,7 +100,8 @@ async function sendAndLog(
     })
 
     return true
-  } catch {
+  } catch (e) {
+    console.error(`phase1 sendAndLog failed — tenant ${tenant.id} type ${type}:`, e)
     return false
   }
 }
@@ -226,7 +229,7 @@ export async function GET(req: NextRequest) {
         if (!pmEmail) continue
 
         await resend.emails.send({
-          from: "RentSentry <onboarding@resend.dev>",
+          from: RESEND_FROM,
           to: pmEmail,
           subject: `RentSentry — Phase 1 ran today (${totalSent} alert${totalSent !== 1 ? "s" : ""} sent)`,
           html: `
@@ -242,7 +245,7 @@ export async function GET(req: NextRequest) {
               <a href="${process.env.NEXT_PUBLIC_APP_URL}/dashboard" style="display:inline-block;margin-top:24px;background:#60a5fa;color:#000;font-weight:700;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;">View Dashboard →</a>
             </div>`,
         })
-      } catch { /* don't fail the whole job if summary email fails */ }
+      } catch (e) { console.error(`phase1 summary email failed for user ${userId}:`, e) }
     }
   }
 
@@ -283,7 +286,7 @@ export async function GET(req: NextRequest) {
       const daysSince = Math.floor((Date.now() - new Date(latestTenant.created_at).getTime()) / (1000 * 60 * 60 * 24))
 
       await resend.emails.send({
-        from: "RentSentry <onboarding@resend.dev>",
+        from: RESEND_FROM,
         to: pmEmail,
         subject: `Your RentSentry data is ${daysSince} days old`,
         html: `
@@ -304,7 +307,7 @@ export async function GET(req: NextRequest) {
         sent_at: new Date().toISOString(),
         notes: `Data ${daysSince} days old — nudge sent to PM`,
       })
-    } catch { /* don't fail the job */ }
+    } catch (e) { console.error(`phase1 stale-data nudge failed for user ${userId}:`, e) }
   }
 
   return NextResponse.json({

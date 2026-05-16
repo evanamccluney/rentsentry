@@ -1,5 +1,5 @@
 "use client"
-import React, { useState } from "react"
+import React, { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import {
@@ -9,9 +9,8 @@ import {
   DollarSign, Download, Lightbulb, CornerDownRight, ClipboardList,
 } from "lucide-react"
 import Link from "next/link"
-import { scoreTenant, type RiskTier } from "@/lib/risk-engine"
-import type { EscalationRules } from "@/lib/escalation-rules"
-import { calculateEconomics } from "@/lib/eviction-economics"
+import { type RiskTier } from "@/lib/risk-engine"
+import { normalizeEscalationRules, type EscalationRules } from "@/lib/escalation-rules"
 import AIMessageContent from "./AIMessageContent"
 import SmsSendModal from "./SmsSendModal"
 import TenantFormModal from "./TenantFormModal"
@@ -88,6 +87,12 @@ interface Tenant {
   card_expiry: string
   payment_method: string
   last_payment_date: string
+  lease_start?: string | null
+  lease_end?: string | null
+  delinquency_start_date?: string | null
+  intake_status?: string | null
+  intake_action?: string | null
+  auto_contact_approved?: boolean | null
   resolution_status?: string | null
   properties?: { name?: string; id?: string; address?: string; state?: string }
 }
@@ -274,9 +279,11 @@ const AUTO_STATUS_CONFIG: Record<AutoStatus, {
 // Human-readable labels for intervention types (covers current + historical records)
 const ACTIVITY_TYPE_LABELS: Record<string, string> = {
   payment_reminder:     "payment reminder",
+  current_balance_reminder: "past-due balance reminder",
   proactive_reminder:   "proactive rent reminder",
   payment_method_alert:       "payment method alert",
   pre_due_delinquent_warning: "pre-due balance warning",
+  intake_review_required: "existing-balance review",
   // legacy types from earlier versions — kept for activity log display
   card_expiry_alert:    "payment reminder",
   card_expiry_30:       "payment reminder",
@@ -301,6 +308,10 @@ const APPROVAL_MESSAGE: Partial<Record<RiskTier, string>> = {
 
 function formatActionDate(date: Date): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+}
+
+function formatTimelineDate(date: Date): string {
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
 }
 
 function relativeDays(date: Date): string {
@@ -363,7 +374,59 @@ function computeScheduledDate(t: Tenant): ScheduledAction | null {
     } catch { return null }
   }
 
+  // Rule D: Balance-carrying non-legal tiers — schedule 2 hours out for immediate PM review
+  if ((t.tier === "reminder" || t.tier === "payment_plan") && (t.balance_due ?? 0) > 0) {
+    const sendDate = new Date(now.getTime() + 2 * 60 * 60 * 1000)
+    return {
+      what: t.tier === "payment_plan" ? "Payment plan offer" : "Payment reminder",
+      date: sendDate,
+      reason: `$${(t.balance_due ?? 0).toLocaleString()} outstanding`,
+    }
+  }
+
   return null
+}
+
+function nextRentDueDate(dueDayOfMonth = 1): Date {
+  const now = new Date()
+  const dueDay = Math.min(Math.max(dueDayOfMonth, 1), 28)
+  const thisMonth = new Date(now.getFullYear(), now.getMonth(), dueDay)
+  return thisMonth > now ? thisMonth : new Date(now.getFullYear(), now.getMonth() + 1, dueDay)
+}
+
+function balanceWarningDate(t: Tenant, daysBeforeDue: number): Date {
+  const due = nextRentDueDate(t.rent_due_day ?? 1)
+  const warning = new Date(due)
+  warning.setDate(warning.getDate() - daysBeforeDue)
+  return warning
+}
+
+function buildTimeline(t: Tenant, autoMode: boolean, escalationRules?: EscalationRules): { primary: string; secondary?: string } | null {
+  const rules = normalizeEscalationRules(escalationRules)
+  if ((t.balance_due ?? 0) <= 0) {
+    const scheduled = computeScheduledDate(t)
+    if (!scheduled) return null
+    return {
+      primary: `Auto ${scheduled.what.toLowerCase()} scheduled ${formatTimelineDate(scheduled.date)} (${relativeDays(scheduled.date)})`,
+      secondary: scheduled.reason,
+    }
+  }
+
+  const nextDue = nextRentDueDate(t.rent_due_day ?? 1)
+  const warning = balanceWarningDate(t, rules.preDueRiskReviewDaysBeforeDue)
+  const currentStage = t.days_past_due > 0
+    ? `${t.days_past_due} day${t.days_past_due === 1 ? "" : "s"} past due`
+    : "balance outstanding"
+  const nextRentTiming = rules.preDueRiskOutreachEnabled
+    ? `Next-rent risk outreach starts ${formatTimelineDate(warning)} (${rules.preDueRiskReviewDaysBeforeDue}d before due) after the current balance is handled.`
+    : "Next-rent risk outreach is turned off in settings."
+
+  return {
+    primary: autoMode
+      ? `Past-due balance action is eligible now and runs before upcoming-rent outreach (${currentStage}).`
+      : `Past-due balance needs review (${currentStage}).`,
+    secondary: `Next rent due ${formatTimelineDate(nextDue)}. ${nextRentTiming}`,
+  }
 }
 
 function getAutoStatus(
@@ -373,6 +436,8 @@ function getAutoStatus(
   autoMode: boolean
 ): AutoStatus {
   if (pausedTenants.has(t.id)) return "paused"
+  const manualIntakeHold = t.intake_action === "manual_review" || t.intake_action === "no_contact"
+  if (autoMode && manualIntakeHold && (t.balance_due ?? 0) > 0 && t.auto_contact_approved === false) return "needs_review"
   if (t.tier === "healthy") return "healthy"
 
   // "sent" = an actual intervention was delivered this month (not dry_run)
@@ -401,6 +466,20 @@ function formatSentTime(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", {
     month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
   })
+}
+
+function Countdown({ targetDate }: { targetDate: Date }) {
+  const [msLeft, setMsLeft] = useState(() => targetDate.getTime() - Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setMsLeft(targetDate.getTime() - Date.now()), 30_000)
+    return () => clearInterval(id)
+  }, [targetDate])
+  if (msLeft <= 0) return <span>now</span>
+  const h = Math.floor(msLeft / 3_600_000)
+  const m = Math.floor((msLeft % 3_600_000) / 60_000)
+  if (h >= 24) { const d = Math.floor(h / 24); return <span>in {d}d</span> }
+  if (h > 0) return <span>in {h}h {m}m</span>
+  return <span>in {m}m</span>
 }
 
 function getSystemMessage(
@@ -439,6 +518,21 @@ function getSystemMessage(
 
   // needs_review: PM must act, or auto mode is off for automated tiers
   if (status === "needs_review") {
+    if ((t.balance_due ?? 0) > 0 && (t.tier === "reminder" || t.tier === "payment_plan")) {
+      return {
+        primary: t.tier === "payment_plan" ? "Next: Offer payment plan for past-due balance" : "Next: Send past-due balance reminder",
+        secondary: "Current balance is prioritized before upcoming rent.",
+      }
+    }
+    const manualIntakeHold = t.intake_action === "manual_review" || t.intake_action === "no_contact"
+    if (autoMode && manualIntakeHold && (t.balance_due ?? 0) > 0 && t.auto_contact_approved === false) {
+      return {
+        primary: t.intake_status === "no_contact"
+          ? "Existing balance logged - tenant contact is blocked"
+          : "Review existing balance before automation starts",
+        secondary: "Auto Mode will not contact this tenant until you approve it.",
+      }
+    }
     if (!autoMode && (t.tier === "watch" || t.tier === "reminder")) {
       return { primary: "No action scheduled — auto mode is off" }
     }
@@ -518,6 +612,19 @@ const AFTER_SEND_LABEL: Partial<Record<RiskTier, string>> = {
   watch:        "Scheduled for delivery · you will be notified when sent",
 }
 
+function afterSendLabel(t: Tenant, autoMode: boolean): string | undefined {
+  if (!autoMode && (t.tier === "watch" || t.tier === "reminder")) {
+    return "Nothing will send automatically - you approve each action"
+  }
+  if ((t.balance_due ?? 0) > 0 && t.tier === "reminder") {
+    return "Sends a past-due balance reminder now"
+  }
+  if ((t.balance_due ?? 0) > 0 && t.tier === "payment_plan") {
+    return "Sends a payment plan for the current balance after your approval"
+  }
+  return AFTER_SEND_LABEL[t.tier]
+}
+
 // Compact "prepared based on" line showing the key signals that triggered this tier
 function buildPreparedLine(t: Tenant): string {
   const parts: string[] = []
@@ -539,6 +646,7 @@ function buildSnapshot(t: Tenant) {
     badge: config.badge,
     balance_due: t.balance_due ?? 0,
     rent_amount: t.rent_amount ?? 0,
+    rent_due_day: t.rent_due_day ?? 1,
     days_past_due: t.days_past_due ?? 0,
     days_late_avg: t.days_late_avg ?? 0,
     late_payment_count: t.late_payment_count ?? 0,
@@ -1545,6 +1653,7 @@ function TenantCard({
   properties,
   autoStatus,
   systemMsg,
+  recentActivity,
   onTogglePause,
   onPaymentRecorded,
   onActionExecuted,
@@ -1555,6 +1664,7 @@ function TenantCard({
   properties: { id: string; name: string; address?: string; state?: string }[]
   autoStatus: AutoStatus
   systemMsg: { primary: string; secondary?: string; reason?: string }
+  recentActivity: RecentActivity[]
   onTogglePause: () => void
   onPaymentRecorded: () => void
   onActionExecuted: () => void
@@ -1599,28 +1709,35 @@ function TenantCard({
   const isPaused = effectiveStatus === "paused"
   const isSent = effectiveStatus === "sent"
   const hasBalance = (t.balance_due ?? 0) > 0
-  // "Review & Send" only applies to tiers requiring PM approval, not already sent/queued/paused
-  const canReviewSend = t.action_type && effectiveStatus === "needs_review"
-  const cardRisk = scoreTenant({
-    days_late_avg: t.days_late_avg ?? 0,
-    late_payment_count: t.late_payment_count ?? 0,
-    previous_delinquency: t.previous_delinquency ?? false,
-    card_expiry: t.card_expiry ?? undefined,
-    payment_method: t.payment_method ?? undefined,
-    balance_due: t.balance_due ?? 0,
-    rent_amount: t.rent_amount ?? 0,
-    last_payment_date: t.last_payment_date ?? undefined,
-    rent_due_day: t.rent_due_day ?? 1,
-    escalation_rules: escalationRules,
-  })
-  const cardEconomics = calculateEconomics({
-    rentAmount: t.rent_amount ?? 0,
-    monthsOwed: (t.rent_amount ?? 0) > 0 ? (t.balance_due ?? 0) / (t.rent_amount ?? 1) : 0,
-    previousDelinquency: t.previous_delinquency ?? false,
-    latePaymentCount: t.late_payment_count ?? 0,
-    state: t.properties?.state,
-  })
+  const rules = normalizeEscalationRules(escalationRules)
+  const actionThreshold = hasBalance
+    ? (t.tier === "payment_plan" ? rules.paymentPlanDay
+      : t.tier === "pay_or_quit" ? rules.payOrQuitDay
+      : t.tier === "reminder" ? 1
+      : 0)
+    : 0
+  const daysOverThreshold = actionThreshold > 0 && t.days_past_due > actionThreshold
+    ? t.days_past_due - actionThreshold
+    : 0
+  const showUrgency = daysOverThreshold >= 5
+  const scheduledAction = effectiveStatus === "queued" ? computeScheduledDate(t) : null
 
+  // Detect payment plan offer sent 3+ days ago with no response yet
+  const pendingPlanOffer = (() => {
+    const tenantActivity = recentActivity.filter(a => a.tenant_id === t.id)
+    const planAgreed = tenantActivity.some(a => a.type === "payment_plan_agreed")
+    if (planAgreed) return null
+    const offer = tenantActivity.find(
+      a => (a.type === "split_pay_offer" || a.type === "pre_due_installment_offer") && a.status === "sent"
+    )
+    if (!offer) return null
+    const daysSinceSent = Math.floor((Date.now() - new Date(offer.sent_at).getTime()) / 86_400_000)
+    return daysSinceSent >= 3 ? daysSinceSent : null
+  })()
+  const manualIntakeHold = t.intake_action === "manual_review" || t.intake_action === "no_contact"
+  const needsIntakeReview = autoMode && manualIntakeHold && hasBalance && t.auto_contact_approved === false
+  // "Review & Send" only applies to tiers requiring PM approval, not already sent/queued/paused
+  const canReviewSend = !needsIntakeReview && t.action_type && effectiveStatus === "needs_review"
   async function trigger(type: string, message?: string) {
     setLoading(type)
     setPendingAction(null)
@@ -1643,6 +1760,31 @@ function TenantCard({
       }
     } catch {
       toast.error("Could not send action.")
+    } finally {
+      setLoading(null)
+    }
+  }
+
+  async function approveIntakeAutomation() {
+    setLoading("approve_intake")
+    try {
+      const res = await fetch(`/api/tenants/${t.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          auto_contact_approved: true,
+          intake_status: "approved",
+          intake_action: "automation_approved",
+        }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || "Could not approve automation.")
+      }
+      toast.success("Automation approved for this tenant.")
+      onActionExecuted()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not approve automation.")
     } finally {
       setLoading(null)
     }
@@ -1694,6 +1836,7 @@ function TenantCard({
   const tenancyLength = (() => {
     const start = t.lease_start ? new Date(t.lease_start + "T00:00:00") : null
     if (!start) return "Unknown"
+    // eslint-disable-next-line react-hooks/purity
     const months = Math.floor((Date.now() - start.getTime()) / (1000 * 60 * 60 * 24 * 30))
     if (months < 1) return "Less than 1 month"
     if (months < 12) return `${months} month${months !== 1 ? "s" : ""}`
@@ -1738,6 +1881,8 @@ function TenantCard({
             days_late_avg: String(t.days_late_avg ?? 0),
             late_payment_count: String(t.late_payment_count ?? 0),
             previous_delinquency: t.previous_delinquency ?? false,
+            delinquency_start_date: t.delinquency_start_date ?? "",
+            intake_action: t.intake_action ?? "manual_review",
           }}
           onClose={() => setEditing(false)}
         />
@@ -1773,211 +1918,186 @@ function TenantCard({
         />
       )}
 
-      <div className={`bg-[#111827] border border-white/[0.08] hover:border-white/[0.13] rounded-2xl p-5 transition-all hover:shadow-lg hover:shadow-black/20 ${statusCfg.opacity}`}>
+      <div className={`bg-[#111113] border border-[#27272a] hover:border-[#3f3f46] rounded-xl p-4 transition-all ${statusCfg.opacity}`}>
 
-        {/* ── Row 1: Identity + Financials ───────────────────────────────────── */}
-        <div className="flex items-start justify-between gap-3 mb-3.5">
-          {/* Left: avatar + name + location */}
-          <div className="flex items-center gap-3 min-w-0">
-            <div className={`w-9 h-9 rounded-full ${avatarColor(t.name)} flex items-center justify-center text-white text-sm font-bold shrink-0`}>
-              {initials(t.name)}
+        {/* ── Row 1: Name + financials ─────────────────────────────────────────── */}
+        <div className="flex items-start justify-between gap-3 mb-0.5">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-white font-semibold text-[15px] leading-tight truncate">{t.name}</span>
+              <button
+                onClick={() => setEditing(true)}
+                className="text-[#3f3f46] hover:text-[#71717a] transition-colors shrink-0"
+                title="Edit tenant"
+              >
+                <Pencil size={11} />
+              </button>
             </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="text-white font-semibold text-[15px] leading-tight truncate">{t.name}</span>
-                <button
-                  onClick={() => setEditing(true)}
-                  className="text-[#374151] hover:text-[#6b7280] transition-colors shrink-0"
-                  title="Edit tenant"
-                >
-                  <Pencil size={11} />
-                </button>
-              </div>
-              <div className="text-[#4b5563] text-xs mt-0.5 truncate">
-                {t.properties?.name ? `${t.properties.name} · ` : ""}Unit {t.unit}
-              </div>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfkOutcomeCfg ? cfkOutcomeCfg.dot : statusCfg.dot}`} />
+              <span className="text-[#71717a] text-xs truncate">
+                {cfkOutcomeCfg
+                  ? cfkOutcomeCfg.badge
+                  : isCfkSent && !cfkOutcomeCfg
+                  ? "Cash for Keys · In Progress"
+                  : statusCfg.label}
+                {t.tier !== "healthy" && !cfkOutcomeCfg && (
+                  <span className="text-[#52525b] ml-1">· {config.badge}</span>
+                )}
+              </span>
+              {!t.phone && <span className="text-[10px] text-[#52525b] ml-1">· No phone</span>}
             </div>
           </div>
 
-          {/* Right: rent + balance (balance dominates when present) */}
           <div className="text-right shrink-0">
             {hasBalance ? (
               <>
                 <div className="text-red-400 text-base font-bold tabular-nums leading-tight">
                   ${t.balance_due.toLocaleString()} owed
                 </div>
-                <div className="text-[#4b5563] text-xs tabular-nums">${t.rent_amount?.toLocaleString()}/mo</div>
+                <div className="text-[#52525b] text-xs tabular-nums">${t.rent_amount?.toLocaleString()}/mo</div>
               </>
             ) : (
-              <div className="text-white font-semibold tabular-nums text-sm">
-                ${t.rent_amount?.toLocaleString()}<span className="text-[#4b5563] font-normal">/mo</span>
+              <div className="text-[#a1a1aa] font-semibold tabular-nums text-sm">
+                ${t.rent_amount?.toLocaleString()}<span className="text-[#52525b] font-normal">/mo</span>
               </div>
             )}
           </div>
         </div>
 
-        {/* ── Row 2: Status badges (max 2) ────────────────────────────────────── */}
-        <div className="flex items-center gap-2 mb-3">
-          {cfkOutcomeCfg ? (
-            <span className={`inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border font-medium ${cfkOutcomeCfg.badgeStyle}`}>
-              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfkOutcomeCfg.dot}`} />
-              {cfkOutcomeCfg.badge}
-            </span>
-          ) : (
-            <span className={`inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border font-medium ${statusCfg.badgeStyle}`}>
-              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusCfg.dot}`} />
-              {isCfkSent && !cfkOutcomeCfg ? "Cash for Keys — In Progress" : statusCfg.label}
-            </span>
-          )}
-          {t.tier !== "healthy" && !cfkOutcomeCfg && (
-            <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${config.badgeStyle}`}>
-              {config.badge}
-            </span>
-          )}
-          {t.tier === "cash_for_keys" && (
-            <span className="text-xs px-2 py-0.5 rounded-full border font-medium bg-orange-500/10 text-orange-400 border-orange-500/20">
-              Cash for Keys
-            </span>
-          )}
-          {!t.phone && (
-            <span className="text-xs px-2 py-0.5 rounded-full border font-medium bg-white/[0.03] text-[#4b5563] border-white/[0.06]" title="No phone number — SMS cannot be sent">
-              No phone
-            </span>
-          )}
+        {/* Unit / property line */}
+        <div className="text-[#52525b] text-xs mb-3">
+          {t.properties?.name ? `${t.properties.name} · ` : ""}Unit {t.unit}
         </div>
 
-        {/* ── Row 3: Problem summary — one line ───────────────────────────────── */}
+        {/* Urgency signal — shown when action is long overdue */}
+        {showUrgency && (
+          <div className="flex items-center gap-1.5 mb-2.5 text-[11px] text-orange-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0 animate-pulse" />
+            Action overdue by {daysOverThreshold}d — act now
+          </div>
+        )}
+
+        {/* Intake review signal */}
+        {needsIntakeReview && (
+          <div className="flex items-center gap-1.5 mb-2.5 text-[11px] text-amber-300">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+            Intake review required before automation
+          </div>
+        )}
+
+        {/* Payment plan offer unanswered */}
+        {pendingPlanOffer !== null && (
+          <div className="flex items-center gap-1.5 mb-2.5 text-[11px] text-amber-400/90">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400/90 shrink-0" />
+            Payment plan offer sent {pendingPlanOffer}d ago — no response yet
+          </div>
+        )}
+
+        {/* Problem summary */}
         <ProblemLine t={t} />
 
-        {/* ── Row 4: Next action box ───────────────────────────────────────────── */}
+        {/* Next action line with countdown */}
         {nextActionText && (
-          <div className={`rounded-lg px-3 py-2.5 mb-3 border ${
-            effectiveStatus === "needs_review" && canReviewSend
-              ? "border-blue-500/20 bg-blue-500/[0.04]"
-              : "border-white/[0.06] bg-white/[0.02]"
-          }`}>
-            <div className="text-[#d1d5db] text-xs font-medium">{nextActionText}</div>
-            {/* "Prepared based on" — only shown for needs_review */}
-            {effectiveStatus === "needs_review" && canReviewSend && (() => {
-              const prepared = buildPreparedLine(t)
-              return prepared ? (
-                <div className="text-[#4b5563] text-[11px] mt-1">
-                  Prepared based on: {prepared}
-                </div>
-              ) : null
-            })()}
-            {effectiveSystemMsg.secondary && (
-              <div className="text-[#4b5563] text-[11px] mt-0.5">{effectiveSystemMsg.secondary}</div>
-            )}
-            {effectiveSystemMsg.reason && (
-              <div className="text-[#374151] text-[10px] mt-1 uppercase tracking-wide">
-                Why: {effectiveSystemMsg.reason}
-              </div>
-            )}
-            {/* Passive reminder — shown for high-urgency tiers sitting unactioned */}
-            {effectiveStatus === "needs_review" && canReviewSend &&
-              (t.tier === "legal" || (t.tier === "pay_or_quit" && t.days_past_due >= 10)) && (
-              <div className="flex items-center gap-1.5 mt-2 text-[10px] text-orange-400/70">
-                <span className="w-1 h-1 rounded-full bg-orange-400/70 shrink-0" />
-                No action taken — risk increasing
-              </div>
-            )}
+          <div className="flex items-start gap-1.5 mb-3.5 text-xs text-[#71717a]">
+            <ArrowRight size={10} className="shrink-0 text-[#52525b] mt-0.5" />
+            <span>
+              {effectiveSystemMsg.primary}
+              {effectiveStatus === "queued" && scheduledAction && (
+                <span className="text-[#a1a1aa] font-medium ml-1">
+                  · <Countdown targetDate={scheduledAction.date} />
+                </span>
+              )}
+              {effectiveSystemMsg.reason && (
+                <span className="text-[#52525b] ml-1">· {effectiveSystemMsg.reason}</span>
+              )}
+            </span>
           </div>
         )}
 
-        {/* ── Row 4b: CFK outcome next step ───────────────────────────────────── */}
+        {/* CFK outcome next step */}
         {cfkOutcomeCfg && (
-          <div className="rounded-lg px-3 py-2.5 mb-3 border border-white/[0.06] bg-white/[0.02]">
-            <div className="text-[#d1d5db] text-xs font-medium">{cfkOutcomeCfg.nextStep}</div>
+          <div className="text-xs text-[#71717a] mb-3.5 pl-4">{cfkOutcomeCfg.nextStep}</div>
+        )}
+
+        {/* High-urgency unactioned warning */}
+        {effectiveStatus === "needs_review" && canReviewSend &&
+          (t.tier === "legal" || (t.tier === "pay_or_quit" && t.days_past_due >= 10)) && (
+          <div className="flex items-center gap-1.5 mb-2.5 text-[11px] text-orange-400/80">
+            <span className="w-1 h-1 rounded-full bg-orange-400/80 shrink-0" />
+            No action taken — risk increasing
           </div>
         )}
 
-        {/* ── Row 5: Actions ──────────────────────────────────────────────────── */}
-        <DecisionMathPanel
-          balanceDue={t.balance_due ?? 0}
-          rentAmount={t.rent_amount ?? 0}
-          rentDueDay={t.rent_due_day ?? 1}
-          leaseGraceDays={t.lease_grace_days ?? 0}
-          risk={cardRisk}
-          economics={cardEconomics}
-          state={t.properties?.state}
-          compact
-        />
-
+        {/* ── Action buttons ───────────────────────────────────────────────────── */}
         <div className="flex items-center gap-2">
-          {/* CFK sent/outcome: show Update Outcome instead of Review & Send */}
+          {needsIntakeReview && (
+            <button
+              onClick={approveIntakeAutomation}
+              disabled={loading !== null}
+              className="flex-1 py-2 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 flex items-center justify-center gap-1.5 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 border border-amber-500/20"
+            >
+              <CheckCircle2 size={12} />
+              {loading === "approve_intake" ? "Approving..." : "Approve Automation"}
+            </button>
+          )}
+
           {isCfkSent && (
             <button
               onClick={() => setCfkOutcomeOpen(true)}
-              className="flex-1 py-2 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-1.5 bg-orange-500/10 border border-orange-500/20 text-orange-400 hover:bg-orange-500/20"
+              className="flex-1 py-2 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-1.5 bg-orange-500/10 border border-orange-500/20 text-orange-400 hover:bg-orange-500/20"
             >
               <HandCoins size={12} />
               Update Outcome
             </button>
           )}
 
-          {/* Primary: Review & Send (tier-specific label) — only if NOT in CFK sent state */}
           {canReviewSend && !isCfkSent && (
             <button
               onClick={() => requestAction(t.action_type)}
               disabled={loading !== null}
-              className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-all disabled:opacity-50 flex items-center justify-center gap-1.5 ${config.buttonStyle}`}
+              className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 flex items-center justify-center gap-1.5 ${config.buttonStyle}`}
             >
               <Send size={12} />
               {loading ? "Sending…" : (REVIEW_BUTTON_LABEL[t.tier] ?? "Review & Send")}
             </button>
           )}
 
-          {/* Secondary: Mark Paid */}
           {hasBalance && !isPaused && !isSent && (
             <button
               onClick={() => setMarkingPaid(true)}
-              className={`py-2 rounded-xl text-sm font-semibold transition-all bg-emerald-600/15 text-emerald-400 hover:bg-emerald-600/25 border border-emerald-500/20 flex items-center justify-center gap-1.5 ${canReviewSend ? "px-3" : "flex-1"}`}
+              className={`py-2 rounded-lg text-xs font-semibold transition-all bg-emerald-600/15 text-emerald-400 hover:bg-emerald-600/25 border border-emerald-500/20 flex items-center justify-center gap-1.5 ${canReviewSend ? "px-3" : "flex-1"}`}
             >
               <DollarSign size={12} /> Mark Paid
             </button>
           )}
 
-          {/* Spacer when no primary or secondary */}
           {!canReviewSend && !hasBalance && <div className="flex-1" />}
 
-          {/* AI Advisor */}
           <button
             onClick={() => setAiOpen(true)}
-            className="h-8 px-3 rounded-xl text-xs font-semibold text-amber-300 bg-amber-500/5 hover:bg-amber-500/15 border border-amber-500/10 hover:border-amber-500/20 transition-colors flex items-center justify-center gap-1.5 shrink-0"
+            className="h-8 w-8 rounded-lg text-[#71717a] bg-white/[0.03] hover:bg-white/[0.06] border border-[#27272a] hover:border-[#3f3f46] transition-colors flex items-center justify-center shrink-0"
             title="Ask AI about this tenant"
           >
-            <Lightbulb size={12} />
-            Ask AI
+            <Lightbulb size={13} />
           </button>
 
-          {/* Tertiary: Pause / Resume */}
           <button
             onClick={onTogglePause}
-            className="h-8 px-3 rounded-xl text-xs font-semibold text-[#6b7280] bg-white/5 hover:bg-white/10 border border-white/5 transition-colors flex items-center justify-center gap-1.5 shrink-0"
+            className="h-8 w-8 rounded-lg text-[#71717a] bg-white/[0.03] hover:bg-white/[0.06] border border-[#27272a] hover:border-[#3f3f46] transition-colors flex items-center justify-center shrink-0"
             title={isPaused ? "Resume automation" : "Pause automation"}
           >
-            {isPaused ? <Play size={12} /> : <Pause size={12} />}
-            {isPaused ? "Resume" : "Pause"}
+            {isPaused ? <Play size={13} /> : <Pause size={13} />}
           </button>
 
-          {/* Details link */}
           <Link
             href={`/dashboard/tenants/${t.id}`}
-            className="text-[#374151] hover:text-[#6b7280] text-xs transition-colors whitespace-nowrap flex items-center gap-0.5 px-1"
+            className="h-8 w-8 rounded-lg text-[#71717a] bg-white/[0.03] hover:bg-white/[0.06] border border-[#27272a] hover:border-[#3f3f46] transition-colors flex items-center justify-center shrink-0"
+            title="Tenant details"
           >
-            Details <ArrowRight size={10} />
+            <ArrowRight size={13} />
           </Link>
         </div>
-
-        {/* After-send helper — only shown for needs_review before any click */}
-        {canReviewSend && effectiveStatus === "needs_review" && (
-          <p className="text-[#374151] text-[10px] mt-2.5 text-center">
-            {!autoMode && (t.tier === "watch" || t.tier === "reminder")
-              ? "Nothing will send automatically — you approve each action"
-              : AFTER_SEND_LABEL[t.tier]}
-          </p>
-        )}
 
       </div>
     </>
@@ -2323,6 +2443,7 @@ function Section({
                     properties={properties}
                     autoStatus={autoStatus}
                     systemMsg={systemMsg}
+                    recentActivity={recentActivity}
                     onTogglePause={() => onTogglePause(t.id)}
                     onPaymentRecorded={onPaymentRecorded}
                     onActionExecuted={onActionExecuted}
@@ -2343,6 +2464,7 @@ function Section({
               properties={properties}
               autoStatus={autoStatus}
               systemMsg={systemMsg}
+              recentActivity={recentActivity}
               onTogglePause={() => onTogglePause(t.id)}
               onPaymentRecorded={onPaymentRecorded}
               onActionExecuted={onActionExecuted}

@@ -46,6 +46,7 @@ export default async function TenantsPage() {
         balance_due: t.balance_due ?? 0,
         rent_amount: t.rent_amount ?? 0,
         last_payment_date: t.last_payment_date ?? undefined,
+        delinquency_start_date: t.delinquency_start_date ?? null,
         rent_due_day: t.rent_due_day ?? 1,
         escalation_rules: escalationRules,
       }),

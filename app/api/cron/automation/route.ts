@@ -52,6 +52,7 @@ import twilio from "twilio"
 import { scoreTenant } from "@/lib/risk-engine"
 import { sendTenantEmail } from "@/lib/email"
 import { profileToEscalationRules, type EscalationRules } from "@/lib/escalation-rules"
+import { generateShortCode } from "@/lib/short-link"
 
 const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
 const FROM_NUMBER = process.env.TWILIO_PHONE_NUMBER!
@@ -163,7 +164,8 @@ export async function GET(req: NextRequest) {
       card_expiry, payment_method,
       balance_due, rent_amount, rent_due_day,
       days_late_avg, late_payment_count,
-      previous_delinquency, last_payment_date,
+      previous_delinquency, last_payment_date, delinquency_start_date,
+      intake_status, intake_action, auto_contact_approved,
       sms_opted_out,
       properties(name)
     `)
@@ -277,6 +279,7 @@ export async function GET(req: NextRequest) {
       balance_due: t.balance_due ?? 0,
       rent_amount: t.rent_amount ?? 0,
       last_payment_date: t.last_payment_date ?? undefined,
+      delinquency_start_date: t.delinquency_start_date ?? null,
       rent_due_day: t.rent_due_day ?? 1,
       days_until_due: untilDue,
       escalation_rules: rulesByUser.get(t.user_id),
@@ -312,9 +315,59 @@ export async function GET(req: NextRequest) {
     const pmConfirmPending = awaitingPmConfirm.has(t.id)
     let triggered = false
 
+    const manualIntakeHold = t.intake_action === "manual_review" || t.intake_action === "no_contact"
+    if (hasBalance && manualIntakeHold && t.auto_contact_approved === false) {
+      triggered = true
+      results.evaluated++
+      const alreadyLogged = await recentlySent(supabase, t.id, "intake_review_required", 30)
+      if (alreadyLogged) {
+        results.skipped_dedup++
+      } else {
+        await supabase.from("interventions").insert({
+          tenant_id: t.id,
+          user_id: t.user_id,
+          type: "intake_review_required",
+          status: "pending",
+          sent_at: new Date().toISOString(),
+          snapshot: {
+            ...snapshot,
+            intake_status: t.intake_status ?? "needs_review",
+            auto_contact_approved: false,
+          },
+          notes: "Existing balance imported or entered by landlord - tenant contact blocked until review.",
+        })
+        results.skipped_awaiting_pm++
+      }
+      continue
+    }
+
     // ── Rule A: proactive reminder — behavior-based, no payment metadata needed ─
     // Fires before rent due date for watch/reminder tenants with late history.
     // Research: chronic-late and at-risk tenants benefit from extra lead time to prepare.
+    if (
+      hasBalance &&
+      !pmConfirmPending &&
+      (risk.tier === "reminder" || risk.tier === "payment_plan")
+    ) {
+      triggered = true
+      results.evaluated++
+      const alreadySent = await recentlySent(supabase, t.id, "current_balance_reminder", 14)
+      if (alreadySent) {
+        results.skipped_dedup++
+      } else {
+        const firstName = t.name.split(" ")[0]
+        const dayText = risk.days_past_due > 0
+          ? ` is ${risk.days_past_due} day${risk.days_past_due === 1 ? "" : "s"} past due`
+          : " is still outstanding"
+        await sendAndLog(
+          supabase, t, "current_balance_reminder",
+          `Hi ${firstName}, your balance of $${(t.balance_due ?? 0).toLocaleString()}${dayText}. Please contact your property manager or reply here to arrange payment. Reply STOP to opt out.`,
+          snapshot, autoMode, results
+        )
+      }
+      continue
+    }
+
     if (
       (risk.tier === "watch" || risk.tier === "reminder") &&
       hasHistory &&
@@ -470,7 +523,7 @@ export async function GET(req: NextRequest) {
         secondDate.setDate(secondDate.getDate() + 14)
         const secondDateStr = secondDate.toISOString().split("T")[0]
 
-        const offerToken = crypto.randomUUID()
+        const offerToken = generateShortCode()
         const offerUrl = `${process.env.NEXT_PUBLIC_APP_URL}/pay/offer/${offerToken}`
         const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
 

@@ -26,6 +26,9 @@ import { sendAttorneyHandoff } from "@/lib/email"
 import { normalizePhone } from "@/lib/phone"
 import { sendTenantSms } from "@/lib/sms"
 import { generateSmsDraft, autoActionType, fallbackSms } from "@/lib/generate-sms-draft"
+import { inferDaysPastDueFromRentCycle } from "@/lib/delinquency"
+
+import { RESEND_FROM } from "@/lib/resend-from"
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 const FROM_NUMBER = process.env.TWILIO_PHONE_NUMBER!
@@ -54,7 +57,14 @@ const DAY_CONTEXT: Record<number, { label: string; suggestion: string; color: st
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-function daysPastDue(lastPaymentDate: string, rentDueDay = 1): number {
+function daysPastDue(lastPaymentDate?: string | null, rentDueDay = 1, delinquencyStartDate?: string | null): number {
+  if (delinquencyStartDate) {
+    const start = new Date(delinquencyStartDate)
+    if (!isNaN(start.getTime())) {
+      return Math.max(0, Math.floor((Date.now() - start.getTime()) / (1000 * 60 * 60 * 24)))
+    }
+  }
+  if (!lastPaymentDate) return inferDaysPastDueFromRentCycle(rentDueDay)
   const last = new Date(lastPaymentDate)
   const now = new Date()
   const dueDay = Math.min(Math.max(rentDueDay, 1), 28)
@@ -161,20 +171,23 @@ export async function GET(req: NextRequest) {
 
   const { data: tenants, error } = await supabase
     .from("tenants")
-    .select("id, name, unit, email, phone, user_id, balance_due, rent_amount, last_payment_date, days_late_avg, late_payment_count, previous_delinquency, sms_opted_out, properties(name, address, state)")
+    .select("id, name, unit, email, phone, user_id, balance_due, rent_amount, rent_due_day, last_payment_date, delinquency_start_date, intake_status, intake_action, auto_contact_approved, days_late_avg, late_payment_count, previous_delinquency, sms_opted_out, properties(name, address, state)")
     .eq("status", "active")
     .gt("balance_due", 0)
-    .not("last_payment_date", "is", null)
+    .or(`snoozed_until.is.null,snoozed_until.lt.${new Date().toISOString()}`)
 
   if (error || !tenants) {
     return NextResponse.json({ error: "Failed to fetch tenants", detail: error?.message }, { status: 500 })
   }
 
-  const delinquent = tenants.filter(t => daysPastDue(t.last_payment_date!) > 0)
+  const delinquent = tenants.filter(t => daysPastDue(t.last_payment_date, t.rent_due_day ?? 1, t.delinquency_start_date) > 0)
 
   // ── Day 0 reminders — fires on the actual due date if balance still owed ──────
   const profileCache: Record<string, { auto_mode: boolean; late_fee_day: number } | null> = {}
-  const dueToday = tenants.filter(t => t.last_payment_date && daysPastDue(t.last_payment_date) === 0)
+  const dueToday = tenants.filter(t => {
+    const manualIntakeHold = t.intake_action === "manual_review" || t.intake_action === "no_contact"
+    return (!manualIntakeHold || (t.auto_contact_approved ?? true)) && daysPastDue(t.last_payment_date, t.rent_due_day ?? 1, t.delinquency_start_date) === 0
+  })
 
   for (const t of dueToday) {
     if (!t.phone || t.sms_opted_out) continue
@@ -263,7 +276,35 @@ export async function GET(req: NextRequest) {
     }> = []
 
     for (const t of userTenants) {
-      const days = daysPastDue(t.last_payment_date!)
+      const days = daysPastDue(t.last_payment_date, t.rent_due_day ?? 1, t.delinquency_start_date)
+      const manualIntakeHold = t.intake_action === "manual_review" || t.intake_action === "no_contact"
+      if (manualIntakeHold && t.auto_contact_approved === false) {
+        const { data: existingReview } = await supabase
+          .from("interventions")
+          .select("id")
+          .eq("tenant_id", t.id)
+          .eq("type", "intake_review_required")
+          .gte("sent_at", new Date(Date.now() - 30 * 86400000).toISOString())
+          .limit(1)
+        if ((existingReview?.length ?? 0) === 0) {
+          await supabase.from("interventions").insert({
+            tenant_id: t.id,
+            user_id: userId,
+            type: "intake_review_required",
+            status: "pending",
+            sent_at: new Date().toISOString(),
+            notes: `Existing balance requires PM review before tenant contact - ${days} days past due`,
+            snapshot: {
+              tenant_id: t.id,
+              tenant_name: t.name,
+              balance_due: t.balance_due ?? 0,
+              days_past_due: days,
+              intake_status: t.intake_status ?? "needs_review",
+            },
+          })
+        }
+        continue
+      }
       const tier = profile?.escalation_preset ? getAlertTierFromRules(days, profile) : getAlertTier(days, style)
       if (!tier) continue
 
@@ -359,7 +400,7 @@ export async function GET(req: NextRequest) {
                 notes: `Overdue warning SMS — ${days} days past due, $${t.balance_due} balance`,
               })
               totalTenantSms++
-            } catch { /* don't fail the job */ }
+            } catch (e) { console.error(`phase2 overdue-warning SMS failed — tenant ${t.id}:`, e) }
           }
         }
       }
@@ -394,7 +435,7 @@ export async function GET(req: NextRequest) {
                   await twilioClient.messages.create({
                     from: FROM_NUMBER,
                     to: pmPhone,
-                    body: `RentSentry: ${t.name} (Unit ${t.unit}) — $${(t.balance_due ?? 0).toLocaleString()} outstanding, ${days} days past due, no logged contact in ${daysSinceInt} days. Suggested next step: ${nextStep}. Have you been in touch? Reply YES or NO.`,
+                    body: `RentSentry: ${t.name} (Unit ${t.unit}) — $${(t.balance_due ?? 0).toLocaleString()} outstanding, ${days} days past due, no logged contact in ${daysSinceInt} days. Suggested next step: ${nextStep}. Have you been in touch? Reply YES, NO, or SNOOZE.`,
                   })
                   await supabase.from("interventions").insert({
                     tenant_id: t.id,
@@ -405,7 +446,7 @@ export async function GET(req: NextRequest) {
                     notes: `Contact check sent — $${t.balance_due} outstanding, ${Math.floor(daysSinceAction)}d since last action`,
                     snapshot: { tenant_id: t.id, tenant_name: t.name, balance_due: t.balance_due },
                   })
-                } catch { /* don't fail the job */ }
+                } catch (e) { console.error(`phase2 contact-check SMS failed — tenant ${t.id}:`, e) }
               }
             }
           }
@@ -458,7 +499,7 @@ export async function GET(req: NextRequest) {
               })
               totalAttorneyEmails++
             }
-          } catch { /* don't fail the job */ }
+          } catch (e) { console.error(`phase2 attorney-handoff failed — tenant ${t.id}:`, e) }
         }
       }
     }
@@ -509,7 +550,7 @@ export async function GET(req: NextRequest) {
               const missed = plan.installments[i]
               try {
                 await resend.emails.send({
-                  from: "RentSentry <onboarding@resend.dev>",
+                  from: RESEND_FROM,
                   to: pmEmail,
                   subject: `${missedTenant.name} missed installment ${i + 1} — $${missed.amount.toLocaleString()} overdue`,
                   html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#0a0e1a;color:#f0f1f3;border-radius:12px;">
@@ -519,7 +560,7 @@ export async function GET(req: NextRequest) {
                     <a href="${process.env.NEXT_PUBLIC_APP_URL}/dashboard/tenants/${tenantId}" style="display:inline-block;margin-top:20px;background:#60a5fa;color:#000;font-weight:700;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:14px;">View Tenant →</a>
                   </div>`,
                 })
-              } catch { /* don't fail the job */ }
+              } catch (e) { console.error(`phase2 installment-missed email failed — tenant ${tenantId}:`, e) }
               if (pmPhone) {
                 try {
                   const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
@@ -528,7 +569,7 @@ export async function GET(req: NextRequest) {
                     to: pmPhone,
                     body: `RentSentry: ${missedTenant.name} (Unit ${missedTenant.unit}) missed installment ${i + 1} of $${missed.amount.toLocaleString()} — due ${missed.due_date}. Follow up directly or convert to Pay or Quit notice. ${process.env.NEXT_PUBLIC_APP_URL}/dashboard/tenants/${tenantId}`,
                   })
-                } catch { /* don't fail the job */ }
+                } catch (e) { console.error(`phase2 installment-missed PM SMS failed — tenant ${tenantId}:`, e) }
               }
             }
 
@@ -603,7 +644,7 @@ export async function GET(req: NextRequest) {
                   notes: `PM asked to confirm payment link outcome — $${t.balance_due} outstanding`,
                   snapshot: { tenant_id: t.id, tenant_name: t.name, balance_due: t.balance_due, amount: t.balance_due },
                 })
-              } catch { /* don't fail the job */ }
+              } catch (e) { console.error(`phase2 payment-link-confirm PM SMS failed — tenant ${t.id}:`, e) }
             }
           }
         }
@@ -702,7 +743,7 @@ export async function GET(req: NextRequest) {
 
     try {
       await resend.emails.send({
-        from: "RentSentry <onboarding@resend.dev>",
+        from: RESEND_FROM,
         to: pmEmail,
         subject,
         html: `
@@ -727,9 +768,11 @@ export async function GET(req: NextRequest) {
         if (urgentItems.length > 0) {
           const sorted = urgentItems.sort((a, b) => b.days - a.days)
           let smsBody: string
+          let singleTenant: typeof sorted[0] | null = null
           if (sorted.length === 1) {
             const { tenant, days, context } = sorted[0]
-            smsBody = `RentSentry: ${tenant.name} (Unit ${tenant.unit}) — Day ${days}, $${(tenant.balance_due ?? 0).toLocaleString()} owed. ${context.suggestion} ${process.env.NEXT_PUBLIC_APP_URL}/dashboard/tenants/${tenant.id}`
+            singleTenant = sorted[0]
+            smsBody = `RentSentry: ${tenant.name} (Unit ${tenant.unit}) — Day ${days}, $${(tenant.balance_due ?? 0).toLocaleString()} owed. ${context.suggestion}\nReply: LINK · PLAN · SNOOZE`
           } else {
             const lines = sorted.map(({ tenant, days }) => `${tenant.name.split(" ")[0]} Day ${days} $${(tenant.balance_due ?? 0).toLocaleString()}`).join(" · ")
             smsBody = `RentSentry: ${sorted.length} tenants need action — ${lines}. Full details in your email or dashboard.`
@@ -737,10 +780,23 @@ export async function GET(req: NextRequest) {
           try {
             const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
             await twilioClient.messages.create({ from: FROM_NUMBER, to: pmPhone, body: smsBody })
-          } catch { /* don't fail if SMS fails */ }
+            // Create a pending intervention so the PM can reply LINK, PLAN, or SNOOZE
+            if (singleTenant) {
+              const { tenant, days } = singleTenant
+              await supabase.from("interventions").insert({
+                tenant_id: tenant.id,
+                user_id: userId,
+                type: "pm_action_prompt_sent",
+                status: "pending",
+                sent_at: new Date().toISOString(),
+                notes: `PM action prompt — Day ${days}, $${tenant.balance_due ?? 0} owed`,
+                snapshot: { tenant_id: tenant.id, tenant_name: tenant.name, balance_due: tenant.balance_due ?? 0, unit: tenant.unit },
+              })
+            }
+          } catch (e) { console.error(`phase2 urgent-PM SMS failed — user ${userId}:`, e) }
         }
       }
-    } catch { /* don't fail the whole job */ }
+    } catch (e) { console.error(`phase2 PM alert email failed — user ${userId}:`, e) }
   }
 
   return NextResponse.json({

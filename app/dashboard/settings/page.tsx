@@ -1,5 +1,5 @@
 "use client"
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
@@ -25,6 +25,43 @@ const PROFILE_SELECT = `
   require_attorney_before_notice, payment_plan_before_notice, custom_escalation_notes,
   timezone, notification_email, default_rent_due_day, pm_alert_triggers
 `
+
+const PROFILE_SELECT_WITHOUT_ATTORNEY = `
+  auto_mode, auto_payment_plan_offers, pm_phone, pm_alerts_enabled, late_fee_percent, late_fee_day, pm_display_name,
+  plaid_item_id, plaid_connected_at,
+  stripe_account_id, stripe_connect_at, stripe_charges_enabled,
+  escalation_preset, reminder_day, payment_plan_day, pay_or_quit_day,
+  cfk_review_day, attorney_review_day, repeat_offender_accelerator_days,
+  pre_due_risk_outreach_enabled, pre_due_risk_review_days_before_due,
+  require_attorney_before_notice, payment_plan_before_notice, custom_escalation_notes,
+  timezone, notification_email, default_rent_due_day, pm_alert_triggers
+`
+
+function isMissingAttorneyColumn(error?: { message?: string } | null) {
+  return !!error?.message && error.message.includes("attorney_") && error.message.includes("schema cache")
+}
+
+interface ProfileSettingsRow extends Record<string, unknown> {
+  auto_mode?: boolean | null
+  auto_payment_plan_offers?: boolean | null
+  timezone?: string | null
+  notification_email?: string | null
+  default_rent_due_day?: number | null
+  pm_alert_triggers?: unknown
+  pm_phone?: string | null
+  pm_alerts_enabled?: boolean | null
+  late_fee_percent?: number | string | null
+  late_fee_day?: number | null
+  pm_display_name?: string | null
+  attorney_name?: string | null
+  attorney_email?: string | null
+  attorney_phone?: string | null
+  plaid_item_id?: string | null
+  plaid_connected_at?: string | null
+  stripe_account_id?: string | null
+  stripe_connect_at?: string | null
+  stripe_charges_enabled?: boolean | null
+}
 
 const US_TIMEZONES = [
   { value: "America/New_York",    label: "Eastern (ET) — New York, Miami, Atlanta" },
@@ -131,7 +168,10 @@ function SettingsPageInner() {
   const [stripeConnectAt, setStripeConnectAt] = useState<string | null>(null)
   const [stripeChargesEnabled, setStripeChargesEnabled] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [autoModeSaving, setAutoModeSaving] = useState(false)
   const [loaded, setLoaded] = useState(false)
+  const [savedSettingsKey, setSavedSettingsKey] = useState<string | null>(null)
+  const skipUnsavedPromptRef = useRef(false)
   const searchParams = useSearchParams()
 
   const ordered = useMemo(
@@ -139,36 +179,113 @@ function SettingsPageInner() {
     [rules]
   )
 
+  const settingsKey = useMemo(() => JSON.stringify({
+    autoPaymentPlanOffers,
+    timezone,
+    notificationEmail,
+    defaultRentDueDay,
+    pmAlertTriggers,
+    pmPhone,
+    pmAlertsEnabled,
+    lateFeePercent,
+    lateFeeDay,
+    pmDisplayName,
+    rules,
+    attorneyName,
+    attorneyEmail,
+    attorneyPhone,
+  }), [
+    autoPaymentPlanOffers,
+    timezone,
+    notificationEmail,
+    defaultRentDueDay,
+    pmAlertTriggers,
+    pmPhone,
+    pmAlertsEnabled,
+    lateFeePercent,
+    lateFeeDay,
+    pmDisplayName,
+    rules,
+    attorneyName,
+    attorneyEmail,
+    attorneyPhone,
+  ])
+
+  const hasUnsavedChanges = loaded && savedSettingsKey !== null && savedSettingsKey !== settingsKey
+
   useEffect(() => {
     async function load() {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      const { data, error } = await supabase.from("profiles").select(PROFILE_SELECT).eq("id", user.id).single()
+      const profileResult = await supabase.from("profiles").select(PROFILE_SELECT).eq("id", user.id).single()
+      let data = profileResult.data as ProfileSettingsRow | null
+      let error = profileResult.error
+      if (isMissingAttorneyColumn(error)) {
+        const fallback = await supabase.from("profiles").select(PROFILE_SELECT_WITHOUT_ATTORNEY).eq("id", user.id).single()
+        data = fallback.data as ProfileSettingsRow | null
+        error = fallback.error
+      }
       if (error) console.error("Settings profile load error:", error.message)
 
       if (data) {
+        const loadedRules = toRules(data)
+        const loadedSettings = {
+          autoPaymentPlanOffers: data.auto_payment_plan_offers ?? true,
+          timezone: data.timezone ?? "America/New_York",
+          notificationEmail: data.notification_email ?? "",
+          defaultRentDueDay: data.default_rent_due_day ?? 1,
+          pmAlertTriggers: Array.isArray(data.pm_alert_triggers) ? data.pm_alert_triggers : ["pay_or_quit", "legal", "installment_missed", "autopay_declined"],
+          pmPhone: data.pm_phone ?? "",
+          pmAlertsEnabled: data.pm_alerts_enabled ?? false,
+          lateFeePercent: String(data.late_fee_percent ?? 5),
+          lateFeeDay: data.late_fee_day ?? 5,
+          pmDisplayName: data.pm_display_name ?? "",
+          rules: loadedRules,
+          attorneyName: data.attorney_name ?? "",
+          attorneyEmail: data.attorney_email ?? "",
+          attorneyPhone: data.attorney_phone ?? "",
+        }
+
         setAutoMode(data.auto_mode ?? false)
-        setAutoPaymentPlanOffers(data.auto_payment_plan_offers ?? true)
-        setTimezone(data.timezone ?? "America/New_York")
-        setNotificationEmail(data.notification_email ?? "")
-        setDefaultRentDueDay(data.default_rent_due_day ?? 1)
-        setPmAlertTriggers(Array.isArray(data.pm_alert_triggers) ? data.pm_alert_triggers : ["pay_or_quit", "legal", "installment_missed", "autopay_declined"])
-        setPmPhone(data.pm_phone ?? "")
-        setPmAlertsEnabled(data.pm_alerts_enabled ?? false)
-        setLateFeePercent(String(data.late_fee_percent ?? 5))
-        setLateFeeDay(data.late_fee_day ?? 5)
-        setPmDisplayName(data.pm_display_name ?? "")
-        setAttorneyName(data.attorney_name ?? "")
-        setAttorneyEmail(data.attorney_email ?? "")
-        setAttorneyPhone(data.attorney_phone ?? "")
+        setAutoPaymentPlanOffers(loadedSettings.autoPaymentPlanOffers)
+        setTimezone(loadedSettings.timezone)
+        setNotificationEmail(loadedSettings.notificationEmail)
+        setDefaultRentDueDay(loadedSettings.defaultRentDueDay)
+        setPmAlertTriggers(loadedSettings.pmAlertTriggers)
+        setPmPhone(loadedSettings.pmPhone)
+        setPmAlertsEnabled(loadedSettings.pmAlertsEnabled)
+        setLateFeePercent(loadedSettings.lateFeePercent)
+        setLateFeeDay(loadedSettings.lateFeeDay)
+        setPmDisplayName(loadedSettings.pmDisplayName)
+        setAttorneyName(loadedSettings.attorneyName)
+        setAttorneyEmail(loadedSettings.attorneyEmail)
+        setAttorneyPhone(loadedSettings.attorneyPhone)
         setPlaidConnected(!!data.plaid_item_id)
         setPlaidConnectedAt(data.plaid_connected_at ?? null)
         setStripeConnected(!!data.stripe_account_id)
         setStripeConnectAt(data.stripe_connect_at ?? null)
         setStripeChargesEnabled(data.stripe_charges_enabled ?? false)
-        setRules(toRules(data))
+        setRules(loadedRules)
+        setSavedSettingsKey(JSON.stringify(loadedSettings))
+      } else {
+        setSavedSettingsKey(JSON.stringify({
+          autoPaymentPlanOffers: true,
+          timezone: "America/New_York",
+          notificationEmail: "",
+          defaultRentDueDay: 1,
+          pmAlertTriggers: ["pay_or_quit", "legal", "installment_missed", "autopay_declined"],
+          pmPhone: "",
+          pmAlertsEnabled: false,
+          lateFeePercent: "5",
+          lateFeeDay: 5,
+          pmDisplayName: "",
+          rules: rulesForPreset("professional"),
+          attorneyName: "",
+          attorneyEmail: "",
+          attorneyPhone: "",
+        }))
       }
 
       // When returning from Stripe Connect onboarding, fetch live status from Stripe
@@ -206,26 +323,51 @@ function SettingsPageInner() {
     setRules(preset === "custom" ? normalizeEscalationRules({ ...rules, preset: "custom" }) : rulesForPreset(preset))
   }
 
-  async function save() {
+  async function toggleAutoMode() {
+    if (autoModeSaving) return
+
+    const nextAutoMode = !autoMode
+    setAutoMode(nextAutoMode)
+    setAutoModeSaving(true)
+
+    try {
+      const res = await fetch("/api/profile/auto-mode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: nextAutoMode }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "Could not update auto mode.")
+
+      setAutoMode(data.auto_mode ?? nextAutoMode)
+    } catch (error) {
+      setAutoMode(!nextAutoMode)
+      toast.error(error instanceof Error ? error.message : "Could not update auto mode.")
+    } finally {
+      setAutoModeSaving(false)
+    }
+  }
+
+  const save = useCallback(async (options: { silent?: boolean } = {}) => {
     if (pmAlertsEnabled && !pmPhone.trim()) {
       toast.error("Enter your phone number to enable PM alerts.")
-      return
+      return false
     }
     const fee = parseFloat(lateFeePercent)
     if (isNaN(fee) || fee < 0 || fee > 50) {
       toast.error("Late fee must be between 0% and 50%.")
-      return
+      return false
     }
     if (!ordered) {
       toast.error("Escalation days must stay in order: plan, notice, CFK, attorney.")
-      return
+      return false
     }
 
     setSaving(true)
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { setSaving(false); return }
-    const { error } = await supabase.from("profiles").upsert({
+    if (!user) { setSaving(false); return false }
+    const payload = {
       id: user.id,
       auto_mode: autoMode,
       auto_payment_plan_offers: autoPaymentPlanOffers,
@@ -243,10 +385,104 @@ function SettingsPageInner() {
       attorney_phone: attorneyPhone.trim() || null,
       ...escalationRulesToProfileUpdate(rules),
       updated_at: new Date().toISOString(),
-    })
-    if (error) toast.error(error.message)
-    else toast.success("Settings saved.")
+    }
+    const { error } = await supabase.from("profiles").upsert(payload)
+    if (error) {
+      if (isMissingAttorneyColumn(error)) {
+        const payloadWithoutAttorney: Record<string, unknown> = { ...payload }
+        delete payloadWithoutAttorney.attorney_name
+        delete payloadWithoutAttorney.attorney_email
+        delete payloadWithoutAttorney.attorney_phone
+        const retry = await supabase.from("profiles").upsert(payloadWithoutAttorney)
+        if (!retry.error) {
+          setSavedSettingsKey(settingsKey)
+          if (!options.silent) toast.warning("Settings saved. Attorney contact fields need the latest database migration before they can save.")
+          setSaving(false)
+          return true
+        }
+      }
+
+      toast.error(error.message)
+      setSaving(false)
+      return false
+    }
+
+    setSavedSettingsKey(settingsKey)
+    if (!options.silent) toast.success("Settings saved.")
     setSaving(false)
+    return true
+  }, [
+    pmAlertsEnabled,
+    pmPhone,
+    lateFeePercent,
+    ordered,
+    autoMode,
+    autoPaymentPlanOffers,
+    timezone,
+    notificationEmail,
+    defaultRentDueDay,
+    pmAlertTriggers,
+    lateFeeDay,
+    pmDisplayName,
+    attorneyName,
+    attorneyEmail,
+    attorneyPhone,
+    rules,
+    settingsKey,
+  ])
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return
+
+    function onBeforeUnload(event: BeforeUnloadEvent) {
+      if (skipUnsavedPromptRef.current) return
+      event.preventDefault()
+      event.returnValue = ""
+    }
+
+    function onDocumentClick(event: MouseEvent) {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      const link = (event.target as Element | null)?.closest("a[href]")
+      if (!(link instanceof HTMLAnchorElement) || link.target) return
+
+      const url = new URL(link.href)
+      if (url.origin !== window.location.origin) return
+      if (url.pathname === window.location.pathname && url.search === window.location.search) return
+
+      event.preventDefault()
+      void save({ silent: true }).then(saved => {
+        if (saved) {
+          skipUnsavedPromptRef.current = true
+          window.location.href = link.href
+        }
+      })
+    }
+
+    window.addEventListener("beforeunload", onBeforeUnload)
+    document.addEventListener("click", onDocumentClick, true)
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload)
+      document.removeEventListener("click", onDocumentClick, true)
+    }
+  }, [hasUnsavedChanges, save])
+
+  function discardChanges() {
+    if (!savedSettingsKey) return
+    const saved = JSON.parse(savedSettingsKey)
+    setAutoPaymentPlanOffers(saved.autoPaymentPlanOffers)
+    setTimezone(saved.timezone)
+    setNotificationEmail(saved.notificationEmail)
+    setDefaultRentDueDay(saved.defaultRentDueDay)
+    setPmAlertTriggers(saved.pmAlertTriggers)
+    setPmPhone(saved.pmPhone)
+    setPmAlertsEnabled(saved.pmAlertsEnabled)
+    setLateFeePercent(saved.lateFeePercent)
+    setLateFeeDay(saved.lateFeeDay)
+    setPmDisplayName(saved.pmDisplayName)
+    setRules(saved.rules)
+    setAttorneyName(saved.attorneyName)
+    setAttorneyEmail(saved.attorneyEmail)
+    setAttorneyPhone(saved.attorneyPhone)
   }
 
   if (!loaded) {
@@ -258,7 +494,7 @@ function SettingsPageInner() {
   }
 
   return (
-    <div className="max-w-3xl">
+    <div className={`max-w-3xl ${hasUnsavedChanges ? "pb-24" : ""}`}>
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-white">Settings</h1>
         <p className="text-[#6b7280] text-sm mt-1">Configure how RentSentry monitors and escalates your portfolio.</p>
@@ -411,7 +647,7 @@ function SettingsPageInner() {
             <span className="text-[#6b7280] text-sm">days past due</span>
           </div>
         </div>
-        <p className="text-[#374151] text-xs mt-2">e.g. "5% kicks in after 5 days" — automated reminders will tell tenants to pay before Day {lateFeeDay} to avoid the fee.</p>
+        <p className="text-[#374151] text-xs mt-2">e.g. &quot;5% kicks in after 5 days&quot; — automated reminders will tell tenants to pay before Day {lateFeeDay} to avoid the fee.</p>
       </div>
 
       <div className="bg-[#111827] border border-white/10 rounded-2xl p-6 mb-5">
@@ -425,7 +661,14 @@ function SettingsPageInner() {
               Master switch for all automated tenant outreach — reminders, alerts, and offers. Legal notices always require your review.
             </p>
           </div>
-          <button onClick={() => setAutoMode(v => !v)} className={`relative shrink-0 w-11 h-6 rounded-full transition-colors ${autoMode ? "bg-emerald-500" : "bg-white/10"}`}>
+          <button
+            type="button"
+            onClick={toggleAutoMode}
+            disabled={autoModeSaving}
+            aria-pressed={autoMode}
+            aria-label="Toggle auto mode"
+            className={`relative shrink-0 w-11 h-6 rounded-full transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${autoMode ? "bg-emerald-500" : "bg-white/10"}`}
+          >
             <span className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${autoMode ? "left-6" : "left-1"}`} />
           </button>
         </div>
@@ -634,7 +877,7 @@ function SettingsPageInner() {
           <h2 className="text-white font-semibold text-sm">Bank Feed</h2>
         </div>
         <p className="text-[#4b5563] text-xs mb-4 leading-relaxed">
-          Connect your rental income account and RentSentry will automatically detect payments. High-confidence matches are recorded instantly — low-confidence matches send you a quick SMS to confirm. Tenants don't need to do anything differently.
+          Connect your rental income account and RentSentry will automatically detect payments. High-confidence matches are recorded instantly — low-confidence matches send you a quick SMS to confirm. Tenants don&apos;t need to do anything differently.
         </p>
         <PlaidConnect
           connected={plaidConnected}
@@ -658,12 +901,40 @@ function SettingsPageInner() {
       </div>
 
       <button
-        onClick={save}
+        onClick={() => void save()}
         disabled={saving || !ordered}
         className="bg-blue-500 hover:bg-blue-600 text-white font-semibold px-6 py-2.5 rounded-xl text-sm transition-colors disabled:opacity-50"
       >
         {saving ? "Saving..." : "Save Settings"}
       </button>
+
+      {hasUnsavedChanges && (
+        <div className="fixed bottom-0 left-56 right-0 z-40 border-t border-white/10 bg-[#09090b]/95 backdrop-blur px-6 py-3">
+          <div className="max-w-3xl flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-white text-sm font-semibold">Unsaved settings changes</div>
+              <div className="text-[#6b7280] text-xs">Changes auto-save when you leave this page, or you can save them now.</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={discardChanges}
+                className="px-4 py-2 rounded-xl border border-white/10 bg-white/5 text-[#9ca3af] hover:text-white hover:bg-white/10 text-sm font-medium transition-colors"
+              >
+                Discard
+              </button>
+              <button
+                type="button"
+                onClick={() => void save()}
+                disabled={saving || !ordered}
+                className="px-4 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 text-white text-sm font-semibold transition-colors disabled:opacity-50"
+              >
+                {saving ? "Saving..." : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

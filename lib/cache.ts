@@ -20,6 +20,7 @@ export const getCachedTenants = (userId: string) =>
           days_late_avg, late_payment_count,
           previous_delinquency, card_expiry, payment_method,
           last_payment_date, resolution_status, lease_end, created_at,
+          delinquency_start_date, intake_status, intake_action, auto_contact_approved,
           properties(name, id, state, address)
         `)
         .eq("user_id", userId)

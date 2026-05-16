@@ -46,41 +46,41 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#0a0e1a] flex items-center justify-center px-6">
+    <main className="min-h-screen bg-[#09090b] flex items-center justify-center px-6">
       <div className="w-full max-w-sm">
 
         {/* Logo */}
         <div className="flex items-center justify-center gap-2 mb-8">
-          <Shield size={20} className="text-blue-400" />
-          <span className="text-white font-bold text-xl">RentSentry</span>
+          <Shield size={20} className="text-[#6366f1]" />
+          <span className="font-heading text-white font-bold text-xl tracking-tight">RentSentry</span>
         </div>
 
         {mode === "login" && (
           <>
             <div className="text-center mb-6">
               <h1 className="text-2xl font-bold text-white">Welcome back</h1>
-              <p className="text-[#6b7280] text-sm mt-1">Sign in to your account</p>
+              <p className="text-[#52525b] text-sm mt-1">Sign in to your account</p>
             </div>
 
-            <form onSubmit={handleLogin} className="bg-[#111827] border border-white/[0.08] rounded-2xl p-6 space-y-4">
+            <form onSubmit={handleLogin} className="bg-[#111113] border border-[#27272a] rounded-xl p-6 space-y-4">
               <div>
-                <label className="text-[#9ca3af] text-sm mb-1.5 block">Email</label>
+                <label className="text-[#71717a] text-sm mb-1.5 block">Email</label>
                 <input
                   type="email"
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   placeholder="you@company.com"
                   required
-                  className="w-full bg-[#0d1117] border border-white/10 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-blue-500/40 placeholder:text-[#374151]"
+                  className="w-full bg-[#09090b] border border-[#27272a] text-white text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:border-[#6366f1]/50 placeholder:text-[#3f3f46]"
                 />
               </div>
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-[#9ca3af] text-sm">Password</label>
+                  <label className="text-[#71717a] text-sm">Password</label>
                   <button
                     type="button"
                     onClick={() => { setMode("forgot"); setError("") }}
-                    className="text-blue-400 text-xs hover:underline"
+                    className="text-[#818cf8] text-xs hover:underline"
                   >
                     Forgot password?
                   </button>
@@ -91,22 +91,22 @@ export default function LoginPage() {
                   onChange={e => setPassword(e.target.value)}
                   placeholder="••••••••"
                   required
-                  className="w-full bg-[#0d1117] border border-white/10 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-blue-500/40 placeholder:text-[#374151]"
+                  className="w-full bg-[#09090b] border border-[#27272a] text-white text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:border-[#6366f1]/50 placeholder:text-[#3f3f46]"
                 />
               </div>
               {error && <p className="text-red-400 text-sm">{error}</p>}
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors"
+                className="w-full bg-[#6366f1] hover:bg-[#818cf8] disabled:opacity-50 text-white font-semibold py-2.5 rounded-lg text-sm transition-colors"
               >
-                {loading ? "Signing in…" : "Sign In"}
+                {loading ? "Signing in…" : "Sign In →"}
               </button>
             </form>
 
-            <p className="text-center text-[#6b7280] text-sm mt-4">
+            <p className="text-center text-[#52525b] text-sm mt-4">
               Don&apos;t have an account?{" "}
-              <Link href="/signup" className="text-blue-400 hover:underline">Sign up free</Link>
+              <Link href="/signup" className="text-[#818cf8] hover:underline">Sign up free</Link>
             </p>
           </>
         )}
@@ -115,33 +115,33 @@ export default function LoginPage() {
           <>
             <div className="text-center mb-6">
               <h1 className="text-2xl font-bold text-white">Reset password</h1>
-              <p className="text-[#6b7280] text-sm mt-1">We'll send a reset link to your email</p>
+              <p className="text-[#52525b] text-sm mt-1">We&apos;ll send a reset link to your email</p>
             </div>
 
-            <form onSubmit={handleForgotPassword} className="bg-[#111827] border border-white/[0.08] rounded-2xl p-6 space-y-4">
+            <form onSubmit={handleForgotPassword} className="bg-[#111113] border border-[#27272a] rounded-xl p-6 space-y-4">
               <div>
-                <label className="text-[#9ca3af] text-sm mb-1.5 block">Email</label>
+                <label className="text-[#71717a] text-sm mb-1.5 block">Email</label>
                 <input
                   type="email"
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   placeholder="you@company.com"
                   required
-                  className="w-full bg-[#0d1117] border border-white/10 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-blue-500/40 placeholder:text-[#374151]"
+                  className="w-full bg-[#09090b] border border-[#27272a] text-white text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:border-[#6366f1]/50 placeholder:text-[#3f3f46]"
                 />
               </div>
               {error && <p className="text-red-400 text-sm">{error}</p>}
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors"
+                className="w-full bg-[#6366f1] hover:bg-[#818cf8] disabled:opacity-50 text-white font-semibold py-2.5 rounded-lg text-sm transition-colors"
               >
-                {loading ? "Sending…" : "Send Reset Link"}
+                {loading ? "Sending…" : "Send Reset Link →"}
               </button>
             </form>
 
-            <p className="text-center text-[#6b7280] text-sm mt-4">
-              <button onClick={() => { setMode("login"); setError("") }} className="text-blue-400 hover:underline">
+            <p className="text-center text-[#52525b] text-sm mt-4">
+              <button onClick={() => { setMode("login"); setError("") }} className="text-[#818cf8] hover:underline">
                 Back to sign in
               </button>
             </p>
@@ -149,17 +149,17 @@ export default function LoginPage() {
         )}
 
         {mode === "forgot" && resetSent && (
-          <div className="bg-[#111827] border border-white/[0.08] rounded-2xl p-8 text-center">
-            <div className="w-12 h-12 rounded-full bg-emerald-500/10 flex items-center justify-center mx-auto mb-4">
+          <div className="bg-[#111113] border border-[#27272a] rounded-xl p-8 text-center">
+            <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mx-auto mb-4">
               <Shield size={20} className="text-emerald-400" />
             </div>
             <h2 className="text-white font-semibold mb-2">Check your email</h2>
-            <p className="text-[#6b7280] text-sm mb-5">
-              We sent a password reset link to <span className="text-white">{email}</span>
+            <p className="text-[#52525b] text-sm mb-5">
+              We sent a password reset link to <span className="text-[#a1a1aa]">{email}</span>
             </p>
             <button
               onClick={() => { setMode("login"); setResetSent(false); setError("") }}
-              className="text-blue-400 text-sm hover:underline"
+              className="text-[#818cf8] text-sm hover:underline"
             >
               Back to sign in
             </button>

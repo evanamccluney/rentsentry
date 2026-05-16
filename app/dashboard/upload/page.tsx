@@ -1,9 +1,11 @@
 "use client"
+/* eslint-disable react/no-unescaped-entities */
 import { useState, useCallback, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { parseCSV, detectColumns, detectHistoryColumns, isHistoricalCSV, aggregateHistoricalRows, mapRow, type MappedTenant } from "@/lib/csv-parser"
 import { scoreTenant } from "@/lib/risk-engine"
 import { normalizePhone } from "@/lib/phone"
+import { inferDelinquencyStartDate } from "@/lib/delinquency"
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -299,29 +301,40 @@ export default function UploadPage() {
     const batchSize = 50
     let inserted = 0
     for (let i = 0; i < preview.length; i += batchSize) {
-      const batch = preview.slice(i, i + batchSize).map((t, idx) => ({
-        property_id: resolvedPropertyId!,
-        user_id: user.id,
-        unit: t.unit || `Unit ${i + idx + 1}`,
-        name: t.name || "Unknown",
-        email: t.email || null,
-        phone: normalizePhone(t.phone) ?? t.phone ?? null,
-        rent_amount: t.rent_amount,
-        lease_start: t.lease_start || null,
-        lease_end: t.lease_end || null,
-        payment_method: t.payment_method || "unknown",
-        card_expiry: t.card_expiry || null,
-        days_late_avg: t.days_late_avg,
-        late_payment_count: t.late_payment_count,
-        previous_delinquency: t.previous_delinquency,
-        balance_due: t.balance_due,
-        last_payment_date: t.last_payment_date || null,
-        move_in_date: t.move_in_date || null,
-        move_out_date: t.move_out_date || null,
-        risk_score: t.risk_score,
-        risk_reasons: t.risk_reasons,
-        status: t.move_out_date ? "vacated" : "active",
-      }))
+      const batch = preview.slice(i, i + batchSize).map((t, idx) => {
+        return {
+          property_id: resolvedPropertyId!,
+          user_id: user.id,
+          unit: t.unit || `Unit ${i + idx + 1}`,
+          name: t.name || "Unknown",
+          email: t.email || null,
+          phone: normalizePhone(t.phone) ?? t.phone ?? null,
+          rent_amount: t.rent_amount,
+          lease_start: t.lease_start || null,
+          lease_end: t.lease_end || null,
+          payment_method: t.payment_method || "unknown",
+          card_expiry: t.card_expiry || null,
+          days_late_avg: t.days_late_avg,
+          late_payment_count: t.late_payment_count,
+          previous_delinquency: t.previous_delinquency,
+          balance_due: t.balance_due,
+          last_payment_date: t.last_payment_date || null,
+          delinquency_start_date: inferDelinquencyStartDate({
+            balanceDue: t.balance_due,
+            rentDueDay: t.rent_due_day,
+            lastPaymentDate: t.last_payment_date,
+            daysPastDue: t.days_past_due,
+          }),
+          intake_status: "normal",
+          intake_action: null,
+          auto_contact_approved: true,
+          move_in_date: t.move_in_date || null,
+          move_out_date: t.move_out_date || null,
+          risk_score: t.risk_score,
+          risk_reasons: t.risk_reasons,
+          status: t.move_out_date ? "vacated" : "active",
+        }
+      })
       const { error } = await supabase.from("tenants").insert(batch)
       if (error) {
         toast.error(`Import failed: ${error.message}`)
@@ -477,7 +490,7 @@ export default function UploadPage() {
           <div className="mt-4 flex items-center gap-3 bg-[#0d1117] border border-white/[0.06] rounded-xl px-5 py-4">
             <Download size={16} className="text-[#4b5563] shrink-0" />
             <div className="flex-1 min-w-0">
-              <p className="text-[#d1d5db] text-sm font-medium">Don't have a CSV yet?</p>
+              <p className="text-[#d1d5db] text-sm font-medium">Don&apos;t have a CSV yet?</p>
               <p className="text-[#4b5563] text-xs mt-0.5">
                 Download the template, fill it in with your tenants, and upload it above.
                 Required fields are <span className="text-white">name, unit, phone, email, rent amount, and balance due</span>.

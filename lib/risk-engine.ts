@@ -1,4 +1,5 @@
 import { normalizeEscalationRules, type EscalationRules } from "@/lib/escalation-rules"
+import { inferDaysPastDueFromRentCycle } from "@/lib/delinquency"
 
 export type RiskScore = 'green' | 'yellow' | 'red'
 
@@ -28,6 +29,7 @@ export interface TenantRiskInput {
   balance_due: number
   rent_amount: number
   last_payment_date?: string  // ISO date
+  delinquency_start_date?: string | null
   rent_due_day?: number       // day of month rent is due (default: 1)
   days_until_due?: number     // pass in for pre-due precision; undefined = ignore
   escalation_rules?: Partial<EscalationRules> | null
@@ -57,7 +59,13 @@ function cardExpiresWithinDays(expiry: string, days: number): boolean {
   } catch { return false }
 }
 
-function estimateDaysPastDue(lastPaymentDate?: string, rentDueDay = 1): number {
+function estimateDaysPastDue(lastPaymentDate?: string, rentDueDay = 1, delinquencyStartDate?: string | null): number {
+  if (delinquencyStartDate) {
+    const start = new Date(delinquencyStartDate)
+    if (!isNaN(start.getTime())) {
+      return Math.max(0, Math.floor((Date.now() - start.getTime()) / (1000 * 60 * 60 * 24)))
+    }
+  }
   if (!lastPaymentDate) return 0
   try {
     const last = new Date(lastPaymentDate)
@@ -78,7 +86,7 @@ export function scoreTenant(t: TenantRiskInput): RiskResult {
   const {
     balance_due: _rawBalance, rent_amount, late_payment_count,
     previous_delinquency, days_late_avg, card_expiry,
-    payment_method, last_payment_date, rent_due_day,
+    payment_method, last_payment_date, delinquency_start_date, rent_due_day,
     days_until_due, escalation_rules,
   } = t
 
@@ -86,7 +94,10 @@ export function scoreTenant(t: TenantRiskInput): RiskResult {
   // Sub-10¢ remainders are treated as cleared — prevents installment rounding from triggering false delinquency
   const balance_due = _rawBalance > 0 && _rawBalance < 0.10 ? 0 : _rawBalance
   const monthsOwed   = rent_amount > 0 ? balance_due / rent_amount : 0
-  const daysPastDue  = estimateDaysPastDue(last_payment_date, rent_due_day ?? 1)
+  const measuredDaysPastDue = estimateDaysPastDue(last_payment_date, rent_due_day ?? 1, delinquency_start_date)
+  const daysPastDue  = balance_due > 0 && measuredDaysPastDue === 0 && !last_payment_date && !delinquency_start_date
+    ? inferDaysPastDueFromRentCycle(rent_due_day ?? 1)
+    : measuredDaysPastDue
   const lateFee      = balance_due > 0 && daysPastDue > 5 ? Math.round(rent_amount * 0.05) : 0
   const repeatOffender = previous_delinquency || late_payment_count >= 5
   const hasHistory     = late_payment_count >= 2 || days_late_avg >= 3
@@ -196,48 +207,15 @@ export function scoreTenant(t: TenantRiskInput): RiskResult {
     }
   }
 
-  // ── PAY OR QUIT — Day 5+ ─────────────────────────────────────────────────
-  // Professional operators usually prepare/serve the formal nonpayment notice
-  // shortly after the lease grace period. It starts the legal clock while still
-  // giving the tenant the statutory cure period.
+  // ── PAYMENT PLAN — Day 5+ (always before Pay or Quit for first-offense cases) ──
+  // Offer a structured cure path first. Skip only for repeat offenders or tenants
+  // who already owe 1.5+ months (at that point voluntary cure is unlikely).
   if (
-    (monthsOwed >= 1 && daysPastDue >= rules.payOrQuitDay) ||
-    (monthsOwed >= 1 && repeatOffender) ||
-    monthsOwed >= 1.5 ||
-    (balance_due > 0 && daysPastDue >= rules.paymentPlanDay + 5 && (late_payment_count >= 3 || repeatOffender)) ||
-    (balance_due > 0 && repeatOffender && daysPastDue >= rules.payOrQuitDay)
+    balance_due > 0 &&
+    monthsOwed < 1.5 &&
+    !repeatOffender &&
+    (daysPastDue >= rules.paymentPlanDay || hasHistory || partialPayer)
   ) {
-    const reasons: string[] = [
-      `${fmt.balance} outstanding — ${fmt.days}`,
-    ]
-    if (late_payment_count >= 3) reasons.push(`${late_payment_count} late payments — chronic pattern`)
-    if (previous_delinquency)    reasons.push('Prior eviction on record')
-    if (monthsOwed >= 1)         reasons.push('Full month of rent outstanding')
-    if (escalatingLate)          reasons.push(`Avg ${days_late_avg} days late — pattern deteriorating`)
-    if (chronicLate && !escalatingLate) reasons.push(`Chronic pattern: avg ${days_late_avg} days late over ${late_payment_count} payments`)
-
-    const narrative =
-      `${daysPastDue > 0 ? `At ${daysPastDue} days past due` : 'With a balance outstanding'} ` +
-      `and ${fmt.balance} owed, a Pay or Quit notice starts the legal clock without committing to ` +
-      `eviction. Most tenants pay within 3–7 days of receiving one — and if they don't, you've ` +
-      `already completed the first required step for Unlawful Detainer, putting you weeks ahead.` +
-      (repeatOffender ? ` Given this tenant's history, sending the notice now protects your position.` : '') +
-      (escalatingLate ? ` The deteriorating payment trend makes voluntary resolution less likely without formal pressure.` : '')
-
-    return {
-      score: 'red', tier: 'pay_or_quit',
-      recommended_action: 'Issue Pay or Quit Notice',
-      action_type: 'legal_packet',
-      reasons, narrative, tenant_pattern: tenantPattern,
-      days_past_due: daysPastDue, late_fee: lateFee,
-      requires_attorney: true,
-    }
-  }
-
-  // ── PAYMENT PLAN — Day 5-14 ───────────────────────────────────────────────
-  // Structure repayment before it escalates. Balance + time pressure (5+ days),
-  // existing late history, OR a full month owed.
-  if (balance_due > 0 && (daysPastDue >= rules.paymentPlanDay || hasHistory || partialPayer)) {
     const reasons: string[] = [`${fmt.balance} outstanding`]
     if (daysPastDue >= 15)       reasons.push(`${daysPastDue} days since rent was due`)
     if (late_payment_count >= 2)  reasons.push(`${late_payment_count} late payments in history`)
@@ -271,6 +249,43 @@ export function scoreTenant(t: TenantRiskInput): RiskResult {
       reasons, narrative, tenant_pattern: tenantPattern,
       days_past_due: daysPastDue, late_fee: lateFee,
       requires_attorney: false,
+    }
+  }
+
+  // ── PAY OR QUIT — for repeat offenders, 1.5+ months owed, or chronic payers ─
+  // Only fires when the payment-plan offer is not appropriate: either the tenant
+  // has a track record that makes voluntary cure unlikely, or the balance is large
+  // enough that a payment plan alone won't resolve the situation.
+  if (
+    (monthsOwed >= 1 && repeatOffender) ||
+    monthsOwed >= 1.5 ||
+    (monthsOwed >= 1 && daysPastDue >= rules.payOrQuitDay && late_payment_count >= 3) ||
+    (balance_due > 0 && repeatOffender && daysPastDue >= rules.payOrQuitDay)
+  ) {
+    const reasons: string[] = [
+      `${fmt.balance} outstanding — ${fmt.days}`,
+    ]
+    if (late_payment_count >= 3) reasons.push(`${late_payment_count} late payments — chronic pattern`)
+    if (previous_delinquency)    reasons.push('Prior eviction on record')
+    if (monthsOwed >= 1)         reasons.push('Full month of rent outstanding')
+    if (escalatingLate)          reasons.push(`Avg ${days_late_avg} days late — pattern deteriorating`)
+    if (chronicLate && !escalatingLate) reasons.push(`Chronic pattern: avg ${days_late_avg} days late over ${late_payment_count} payments`)
+
+    const narrative =
+      `${daysPastDue > 0 ? `At ${daysPastDue} days past due` : 'With a balance outstanding'} ` +
+      `and ${fmt.balance} owed, a Pay or Quit notice starts the legal clock without committing to ` +
+      `eviction. Most tenants pay within 3–7 days of receiving one — and if they don't, you've ` +
+      `already completed the first required step for Unlawful Detainer, putting you weeks ahead.` +
+      (repeatOffender ? ` Given this tenant's history, sending the notice now protects your position.` : '') +
+      (escalatingLate ? ` The deteriorating payment trend makes voluntary resolution less likely without formal pressure.` : '')
+
+    return {
+      score: 'red', tier: 'pay_or_quit',
+      recommended_action: 'Issue Pay or Quit Notice',
+      action_type: 'legal_packet',
+      reasons, narrative, tenant_pattern: tenantPattern,
+      days_past_due: daysPastDue, late_fee: lateFee,
+      requires_attorney: true,
     }
   }
 

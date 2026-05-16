@@ -3,6 +3,8 @@ import { createClient } from "@/lib/supabase/server"
 import { revalidateTag } from "next/cache"
 import type { TenantImportRow } from "@/lib/import-mappers"
 import { normalizePhone } from "@/lib/phone"
+import { planLimitFor, isOnTrial } from "@/lib/plan-limits"
+import { inferDelinquencyStartDate } from "@/lib/delinquency"
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
@@ -15,6 +17,48 @@ export async function POST(req: NextRequest) {
   }
 
   if (!rows?.length) return NextResponse.json({ error: "No rows provided" }, { status: 400 })
+
+  // ── Plan limit enforcement (skipped during 30-day trial) ──────────────────
+  if (!isOnTrial(user.created_at)) {
+    const { data: subscription } = await supabase
+      .from("subscriptions")
+      .select("status, metadata")
+      .eq("user_id", user.id)
+      .single()
+
+    if (subscription?.status === "active") {
+      const limit = planLimitFor(subscription.metadata?.plan)
+      if (limit !== null) {
+        // Count existing active tenants
+        const { count: currentCount } = await supabase
+          .from("tenants")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", user.id)
+          .eq("status", "active")
+
+        // Count existing unit names so we don't double-count upserts
+        const { data: existingUnits } = await supabase
+          .from("tenants")
+          .select("unit")
+          .eq("user_id", user.id)
+          .eq("status", "active")
+
+        const existingUnitSet = new Set((existingUnits ?? []).map(t => t.unit))
+        const newUnitCount = rows.filter(r => r.name && r.unit && !r._errors?.length && !existingUnitSet.has(r.unit)).length
+        const projectedTotal = (currentCount ?? 0) + newUnitCount
+
+        if (projectedTotal > limit) {
+          return NextResponse.json({
+            error: `This import would bring you to ${projectedTotal} units, over your plan limit of ${limit}. Upgrade your plan or reduce the import.`,
+            upgrade: true,
+            current: currentCount,
+            projected: projectedTotal,
+            limit,
+          }, { status: 403 })
+        }
+      }
+    }
+  }
 
   const { data: profile } = await supabase
     .from("profiles")
@@ -34,6 +78,7 @@ export async function POST(req: NextRequest) {
       // Tenants typically pay 0-5 days after due — subtract to get approximate due day
       rentDueDay = Math.min(28, Math.max(1, payDay <= 5 ? 1 : payDay - 3))
     }
+    const finalRentDueDay = rentDueDay ?? portfolioDefaultDueDay
     return {
       user_id:              user.id,
       property_id:          propertyId ?? null,
@@ -45,8 +90,17 @@ export async function POST(req: NextRequest) {
       balance_due:          r.balance_due ?? 0,
       lease_start:          r.lease_start ?? null,
       lease_end:            r.lease_end ?? null,
-      rent_due_day:         rentDueDay ?? portfolioDefaultDueDay,
+      rent_due_day:         finalRentDueDay,
       last_payment_date:    r.last_payment_date ?? null,
+      delinquency_start_date: inferDelinquencyStartDate({
+        balanceDue: r.balance_due,
+        rentDueDay: finalRentDueDay,
+        lastPaymentDate: r.last_payment_date,
+        daysPastDue: r.days_past_due,
+      }),
+      intake_status:        "normal",
+      intake_action:        null,
+      auto_contact_approved: true,
       payment_method:       r.payment_method ?? "unknown",
       card_expiry:          r.card_expiry ?? null,
       previous_delinquency: r.previous_delinquency ?? false,

@@ -4,12 +4,35 @@ import {
   Lightbulb, Shield, TrendingUp, AlertTriangle, DollarSign,
 } from "lucide-react"
 
+// ── Browser chrome wrapper ────────────────────────────────────────────────────
+
+function BrowserChrome({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl overflow-hidden border border-white/[0.08] shadow-[0_40px_100px_-20px_rgba(0,0,0,0.8)]">
+      <div className="bg-[#16181d] border-b border-white/[0.06] px-4 py-3 flex items-center gap-3">
+        <div className="flex gap-1.5 shrink-0">
+          <div className="w-3 h-3 rounded-full bg-[#ff5f56]" />
+          <div className="w-3 h-3 rounded-full bg-[#ffbd2e]" />
+          <div className="w-3 h-3 rounded-full bg-[#27c93f]" />
+        </div>
+        <div className="flex-1 flex justify-center">
+          <div className="bg-white/[0.05] border border-white/[0.04] rounded-md px-4 py-1 text-[#374151] text-xs font-mono tracking-wide">
+            app.rentsentry.com
+          </div>
+        </div>
+        <div className="w-14 shrink-0" />
+      </div>
+      {children}
+    </div>
+  )
+}
+
 // ── Mini UI previews ──────────────────────────────────────────────────────────
 
 function TenantRowPreview({
-  name, unit, balance, tier, badge, badgeColor, dot,
+  name, unit, balance, badge, badgeColor, dot,
 }: {
-  name: string; unit: string; balance: string; tier: string
+  name: string; unit: string; balance: string
   badge: string; badgeColor: string; dot: string
 }) {
   return (
@@ -31,8 +54,7 @@ function TenantRowPreview({
 
 function DashboardPreview() {
   return (
-    <div className="bg-[#0d1117] border border-white/10 rounded-2xl p-5 shadow-2xl shadow-black/40">
-      {/* Stat row */}
+    <div className="bg-[#0d1117] p-5">
       <div className="grid grid-cols-3 gap-3 mb-4">
         {[
           { label: "Monthly Rent", value: "$18,400", color: "text-white" },
@@ -45,12 +67,11 @@ function DashboardPreview() {
           </div>
         ))}
       </div>
-      {/* Tenant list */}
       <div className="space-y-2">
         <div className="text-[#4b5563] text-xs uppercase tracking-wide mb-2">Needs Action</div>
-        <TenantRowPreview name="Marcus Johnson" unit="4B" balance="$2,600" tier="pay_or_quit" badge="Pay or Quit" badgeColor="bg-red-500/10 text-red-400 border-red-500/20" dot="bg-red-400" />
-        <TenantRowPreview name="Sandra Williams" unit="2A" balance="$1,300" tier="cash_for_keys" badge="Cash for Keys" badgeColor="bg-orange-500/10 text-orange-400 border-orange-500/20" dot="bg-orange-500" />
-        <TenantRowPreview name="Kevin Durant" unit="7C" balance="$650" tier="reminder" badge="Reminder Sent" badgeColor="bg-yellow-400/10 text-yellow-400 border-yellow-400/20" dot="bg-yellow-400" />
+        <TenantRowPreview name="Marcus Johnson" unit="4B" balance="$2,600" badge="Pay or Quit" badgeColor="bg-red-500/10 text-red-400 border-red-500/20" dot="bg-red-400" />
+        <TenantRowPreview name="Sandra Williams" unit="2A" balance="$1,300" badge="Cash for Keys" badgeColor="bg-orange-500/10 text-orange-400 border-orange-500/20" dot="bg-orange-500" />
+        <TenantRowPreview name="Kevin Durant" unit="7C" balance="$650" badge="Reminder Sent" badgeColor="bg-yellow-400/10 text-yellow-400 border-yellow-400/20" dot="bg-yellow-400" />
       </div>
     </div>
   )
@@ -83,7 +104,7 @@ function AIPreview() {
           </div>
         </div>
         <div className="bg-[#111827] border border-amber-500/20 rounded-xl p-2.5">
-          <div className="text-amber-400 text-xs font-medium mb-1.5">📱 Suggested SMS</div>
+          <div className="text-amber-400 text-xs font-medium mb-1.5">Suggested SMS</div>
           <div className="text-[#9ca3af] text-xs">Marcus, your balance of $2,600 is critically overdue. A Pay or Quit notice is being issued today. Contact me immediately to resolve this.</div>
         </div>
       </div>
@@ -126,11 +147,11 @@ export default function HomePage() {
     <main className="min-h-screen bg-[#0a0e1a] text-white">
 
       {/* Nav */}
-      <nav className="border-b border-white/[0.06] px-6 py-4">
+      <nav className="border-b border-white/[0.06] px-6 py-4 relative z-10">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Shield size={18} className="text-blue-400" />
-            <span className="font-bold text-white text-lg">RentSentry</span>
+            <span className="font-bold text-white text-lg tracking-tight">RentSentry</span>
           </div>
           <div className="flex items-center gap-3">
             <Link href="/login" className="text-[#6b7280] hover:text-white text-sm transition-colors">
@@ -146,56 +167,68 @@ export default function HomePage() {
         </div>
       </nav>
 
-      {/* Hero */}
-      <section className="px-6 pt-20 pb-16 text-center">
-        <div className="max-w-3xl mx-auto">
-          <div className="inline-flex items-center gap-2 bg-blue-500/10 border border-blue-500/20 rounded-full px-4 py-1.5 text-sm text-blue-400 mb-8">
-            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-            Built for independent landlords
-          </div>
-
-          <h1 className="text-5xl sm:text-6xl font-bold tracking-tight leading-tight mb-6">
-            Most landlords lose<br />
-            <span className="text-blue-400">2–3 months of rent</span><br />
-            before they know what to do.
-          </h1>
-
-          <p className="text-[#9ca3af] text-xl leading-relaxed mb-10 max-w-2xl mx-auto">
-            RentSentry tells you exactly what to do the moment a tenant goes late —
-            automated SMS, state-specific legal notices, and an AI advisor that knows
-            every detail of your tenant's history.
-          </p>
-
-          <div className="flex flex-col sm:flex-row gap-3 justify-center mb-6">
-            <Link
-              href="/signup"
-              className="bg-blue-500 hover:bg-blue-600 text-white font-semibold px-8 py-3.5 rounded-xl text-base transition-colors flex items-center justify-center gap-2"
-            >
-              Start Free — No Credit Card <ArrowRight size={16} />
-            </Link>
-            <Link
-              href="/login"
-              className="border border-white/10 hover:border-white/20 text-white font-semibold px-8 py-3.5 rounded-xl text-base transition-colors"
-            >
-              Sign In
-            </Link>
-          </div>
-
-          <p className="text-[#4b5563] text-sm">Free for 3 months · No setup fees · Cancel anytime</p>
+      {/* Hero — split layout */}
+      <section className="relative px-6 overflow-hidden">
+        {/* Radial glow */}
+        <div className="pointer-events-none absolute top-0 left-0 w-full h-full">
+          <div className="absolute top-[-10%] left-[10%] w-[700px] h-[500px] bg-blue-600/[0.12] rounded-full blur-[120px]" />
+          <div className="absolute top-[20%] right-[-5%] w-[400px] h-[400px] bg-indigo-600/[0.07] rounded-full blur-[100px]" />
         </div>
-      </section>
 
-      {/* Dashboard preview */}
-      <section className="px-6 pb-20">
-        <div className="max-w-2xl mx-auto">
-          <DashboardPreview />
+        <div className="max-w-6xl mx-auto relative">
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.15fr] gap-12 lg:gap-16 items-center py-20 lg:py-28">
+
+            {/* Left: text */}
+            <div>
+              <div className="inline-flex items-center gap-2 border border-white/[0.08] bg-white/[0.03] rounded-lg px-3 py-1 text-xs text-[#6b7280] mb-7 uppercase tracking-widest">
+                Property management software
+              </div>
+
+              <h1 className="font-heading text-[3.25rem] sm:text-[4rem] lg:text-[4.25rem] font-extrabold tracking-tighter leading-[1.02] mb-6 text-white">
+                Most landlords lose{" "}
+                <span className="text-blue-400">2–3 months of rent</span>{" "}
+                before they know what to do.
+              </h1>
+
+              <p className="text-[#9ca3af] text-lg leading-relaxed mb-10 max-w-lg">
+                RentSentry tells you exactly what to do the moment a tenant goes late —
+                automated SMS, state-specific legal notices, and an AI advisor that knows
+                every detail of your tenant's history.
+              </p>
+
+              <div className="flex flex-col sm:flex-row gap-3 mb-6">
+                <Link
+                  href="/signup"
+                  className="bg-blue-500 hover:bg-blue-600 text-white font-semibold px-8 py-3.5 rounded-xl text-base transition-colors flex items-center justify-center gap-2"
+                >
+                  Start Free — No Credit Card <ArrowRight size={16} />
+                </Link>
+                <Link
+                  href="/login"
+                  className="border border-white/10 hover:border-white/20 text-white font-semibold px-8 py-3.5 rounded-xl text-base transition-colors text-center"
+                >
+                  Sign In
+                </Link>
+              </div>
+
+              <p className="text-[#4b5563] text-sm">30-day free trial · No setup fees · Cancel anytime</p>
+            </div>
+
+            {/* Right: dashboard in browser chrome */}
+            <div className="relative">
+              <BrowserChrome>
+                <DashboardPreview />
+              </BrowserChrome>
+            </div>
+
+          </div>
         </div>
       </section>
 
       {/* Problem */}
       <section className="px-6 py-16 border-t border-white/[0.06]">
         <div className="max-w-4xl mx-auto text-center mb-12">
-          <h2 className="text-3xl font-bold mb-4">The problem every landlord knows</h2>
+          <h2 className="font-heading text-3xl sm:text-4xl font-bold tracking-tight mb-4">The problem every landlord knows</h2>
           <p className="text-[#9ca3af] text-lg">Rent is late. You wait. You text. They don't respond. Weeks pass. Now you're two months in and Googling "how to evict a tenant."</p>
         </div>
 
@@ -204,7 +237,7 @@ export default function HomePage() {
             {
               icon: <AlertTriangle size={18} className="text-red-400" />,
               title: "You find out too late",
-              desc: "By the time most landlords act, the tenant is already 30-60 days behind. That's $1,200–$2,400 gone.",
+              desc: "By the time most landlords act, the tenant is already 30–60 days behind. That's $1,200–$2,400 gone.",
             },
             {
               icon: <MessageSquare size={18} className="text-orange-400" />,
@@ -221,7 +254,7 @@ export default function HomePage() {
               <div className="w-9 h-9 rounded-xl bg-white/5 flex items-center justify-center mb-4">
                 {item.icon}
               </div>
-              <div className="text-white font-semibold mb-2">{item.title}</div>
+              <div className="font-heading text-white font-semibold text-lg tracking-tight mb-2">{item.title}</div>
               <div className="text-[#6b7280] text-sm leading-relaxed">{item.desc}</div>
             </div>
           ))}
@@ -232,7 +265,7 @@ export default function HomePage() {
       <section className="px-6 py-16 border-t border-white/[0.06]">
         <div className="max-w-4xl mx-auto">
           <div className="text-center mb-14">
-            <h2 className="text-3xl font-bold mb-4">Everything you need to get paid</h2>
+            <h2 className="font-heading text-3xl sm:text-4xl font-bold tracking-tight mb-4">Everything you need to get paid</h2>
             <p className="text-[#9ca3af] text-lg">RentSentry handles the escalation so you don't have to guess.</p>
           </div>
 
@@ -242,7 +275,7 @@ export default function HomePage() {
               <div className="inline-flex items-center gap-2 bg-blue-500/10 border border-blue-500/15 rounded-lg px-3 py-1 text-blue-400 text-xs font-medium mb-4">
                 <TrendingUp size={12} /> Risk Engine
               </div>
-              <h3 className="text-2xl font-bold mb-3">Know exactly who needs attention today</h3>
+              <h3 className="font-heading text-2xl font-bold tracking-tight mb-3">Know exactly who needs attention today</h3>
               <p className="text-[#9ca3af] leading-relaxed mb-5">
                 Every tenant is automatically scored and assigned a tier — from Healthy to Pay or Quit to Eviction.
                 You open the dashboard and immediately know who to deal with. No guessing.
@@ -260,7 +293,9 @@ export default function HomePage() {
                 ))}
               </ul>
             </div>
-            <DashboardPreview />
+            <BrowserChrome>
+              <DashboardPreview />
+            </BrowserChrome>
           </div>
 
           {/* Feature 2 — AI advisor */}
@@ -270,7 +305,7 @@ export default function HomePage() {
               <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/15 rounded-lg px-3 py-1 text-amber-400 text-xs font-medium mb-4">
                 <Lightbulb size={12} /> AI Advisor
               </div>
-              <h3 className="text-2xl font-bold mb-3">AI that knows your tenant's full history</h3>
+              <h3 className="font-heading text-2xl font-bold tracking-tight mb-3">AI that knows your tenant's full history</h3>
               <p className="text-[#9ca3af] leading-relaxed mb-5">
                 Tell the AI what the tenant said. It knows their balance, how many months they're behind,
                 your state's laws, and every message you've sent. It tells you exactly what to do — and
@@ -297,7 +332,7 @@ export default function HomePage() {
               <div className="inline-flex items-center gap-2 bg-red-500/10 border border-red-500/15 rounded-lg px-3 py-1 text-red-400 text-xs font-medium mb-4">
                 <FileText size={12} /> Legal Notices
               </div>
-              <h3 className="text-2xl font-bold mb-3">State-specific Pay or Quit in one click</h3>
+              <h3 className="font-heading text-2xl font-bold tracking-tight mb-3">State-specific Pay or Quit in one click</h3>
               <p className="text-[#9ca3af] leading-relaxed mb-5">
                 All 50 states. The right notice, the right timeline, the right legal citation.
                 Enter your name, download the PDF. Most tenants pay within 7 days of receiving it.
@@ -350,7 +385,7 @@ export default function HomePage() {
                 <div className={`w-9 h-9 rounded-xl border flex items-center justify-center mb-4 ${f.color}`}>
                   {f.icon}
                 </div>
-                <div className="text-white font-semibold text-sm mb-1.5">{f.title}</div>
+                <div className="font-heading text-white font-semibold tracking-tight mb-1.5">{f.title}</div>
                 <div className="text-[#6b7280] text-xs leading-relaxed">{f.desc}</div>
               </div>
             ))}
@@ -361,7 +396,7 @@ export default function HomePage() {
       {/* How it works */}
       <section className="px-6 py-16 border-t border-white/[0.06]">
         <div className="max-w-3xl mx-auto text-center">
-          <h2 className="text-3xl font-bold mb-3">Up and running in 5 minutes</h2>
+          <h2 className="font-heading text-3xl sm:text-4xl font-bold tracking-tight mb-3">Up and running in 5 minutes</h2>
           <p className="text-[#9ca3af] mb-12">No complicated setup. No integrations required to get started.</p>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
@@ -386,7 +421,7 @@ export default function HomePage() {
                 <div className="w-10 h-10 rounded-full bg-blue-500/15 border border-blue-500/25 text-blue-400 font-bold text-lg flex items-center justify-center mb-4">
                   {s.step}
                 </div>
-                <div className="text-white font-semibold mb-2">{s.title}</div>
+                <div className="font-heading text-white font-semibold tracking-tight mb-2">{s.title}</div>
                 <div className="text-[#6b7280] text-sm leading-relaxed">{s.desc}</div>
               </div>
             ))}
@@ -398,48 +433,73 @@ export default function HomePage() {
       <section className="px-6 py-16 border-t border-white/[0.06]">
         <div className="max-w-4xl mx-auto">
           <div className="text-center mb-12">
-            <h2 className="text-3xl font-bold mb-3">Simple pricing</h2>
-            <p className="text-[#9ca3af]">One prevented eviction pays for 6 years of RentSentry. Works alongside whatever software you already use.</p>
+            <h2 className="font-heading text-3xl sm:text-4xl font-bold tracking-tight mb-3">Simple pricing</h2>
+            <p className="text-[#9ca3af]">All plans include every feature. Tiers are based on unit count only. One prevented eviction pays for years of RentSentry.</p>
           </div>
 
-          <div className="max-w-sm mx-auto">
-            <div className="rounded-2xl p-8 border bg-blue-500/10 border-blue-500/30 relative">
-              <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-blue-500 text-white text-xs font-semibold px-3 py-1 rounded-full">
-                Flat rate · no surprises
-              </div>
-              <div className="text-center mb-6">
-                <div className="text-5xl font-bold text-white mb-1">$29</div>
-                <div className="text-[#6b7280] text-sm">per month · unlimited tenants</div>
-              </div>
-              <div className="space-y-3 mb-6">
-                {[
-                  "Automatic payment detection via bank feed",
-                  "7-tier risk scoring engine",
-                  "Structured escalation workflow",
-                  "Pay or Quit notice generator",
-                  "Attorney handoff emails",
-                  "SMS confirmation loop",
-                  "Unlimited properties & tenants",
-                ].map(f => (
-                  <div key={f} className="flex items-center gap-2.5 text-sm text-[#d1d5db]">
-                    <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
-                    {f}
-                  </div>
-                ))}
-              </div>
-              <Link
-                href="/signup"
-                className="block text-center text-sm font-semibold py-2.5 rounded-xl transition-colors bg-blue-500 hover:bg-blue-600 text-white"
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+            {[
+              { name: "Starter", price: "$29", limit: "Up to 5 units", popular: false },
+              { name: "Pro",     price: "$59", limit: "Up to 20 units", popular: true  },
+              { name: "Portfolio", price: "$99", limit: "Up to 100 units", popular: false },
+            ].map(plan => (
+              <div
+                key={plan.name}
+                className={`relative rounded-2xl p-6 border flex flex-col gap-5 ${
+                  plan.popular
+                    ? "bg-blue-500/10 border-blue-500/30"
+                    : "bg-[#111827] border-white/[0.08]"
+                }`}
               >
-                Start Free — 30 days free
-              </Link>
-            </div>
+                {plan.popular && (
+                  <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                    <span className="bg-blue-500 text-white text-xs font-bold px-3 py-1 rounded-full whitespace-nowrap">
+                      Most Popular
+                    </span>
+                  </div>
+                )}
+                <div>
+                  <div className="font-heading text-white font-bold tracking-tight">{plan.name}</div>
+                  <div className="text-[#6b7280] text-xs mt-0.5">{plan.limit}</div>
+                </div>
+                <div className="flex items-baseline gap-1">
+                  <span className="font-heading text-4xl font-extrabold text-white tracking-tight">{plan.price}</span>
+                  <span className="text-[#6b7280] text-sm">/mo</span>
+                </div>
+                <div className="space-y-2.5 flex-1">
+                  {[
+                    "Automated SMS rent reminders",
+                    "AI chatbot for tenant replies",
+                    "Pay or Quit notice generator",
+                    "Payment plan negotiation",
+                    "Attorney handoff emails",
+                    "Credit reporting for tenants",
+                    "Multilingual tenant support",
+                  ].map(f => (
+                    <div key={f} className="flex items-center gap-2 text-xs text-[#d1d5db]">
+                      <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />
+                      {f}
+                    </div>
+                  ))}
+                </div>
+                <Link
+                  href="/signup"
+                  className={`block text-center text-sm font-semibold py-2.5 rounded-xl transition-colors ${
+                    plan.popular
+                      ? "bg-blue-500 hover:bg-blue-600 text-white"
+                      : "bg-white/10 hover:bg-white/15 text-white"
+                  }`}
+                >
+                  Start Free Trial
+                </Link>
+              </div>
+            ))}
           </div>
 
-          <div className="mt-6 flex flex-wrap justify-center gap-x-8 gap-y-3">
+          <div className="mt-8 flex flex-wrap justify-center gap-x-8 gap-y-3">
             {[
               "30-day free trial",
-              "All features included",
+              "All features on every plan",
               "No credit card required",
               "Cancel anytime",
             ].map(item => (
@@ -455,7 +515,7 @@ export default function HomePage() {
       {/* Final CTA */}
       <section className="px-6 py-20 border-t border-white/[0.06]">
         <div className="max-w-2xl mx-auto text-center">
-          <h2 className="text-4xl font-bold mb-4">
+          <h2 className="font-heading text-4xl sm:text-5xl font-extrabold tracking-tighter mb-4">
             Stop losing money to<br />tenants who won't pay.
           </h2>
           <p className="text-[#9ca3af] text-lg mb-8">
@@ -468,7 +528,7 @@ export default function HomePage() {
           >
             Get Started Free <ArrowRight size={16} />
           </Link>
-          <p className="text-[#4b5563] text-sm mt-4">Free for 3 months. No credit card.</p>
+          <p className="text-[#4b5563] text-sm mt-4">30-day free trial. No credit card.</p>
         </div>
       </section>
 
@@ -477,7 +537,7 @@ export default function HomePage() {
         <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <Shield size={15} className="text-blue-400" />
-            <span className="text-white font-semibold">RentSentry</span>
+            <span className="text-white font-semibold tracking-tight">RentSentry</span>
           </div>
           <div className="flex items-center gap-6 text-[#4b5563] text-sm">
             <Link href="/privacy" className="hover:text-white transition-colors">Privacy</Link>

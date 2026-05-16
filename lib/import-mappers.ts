@@ -15,6 +15,7 @@ export interface TenantImportRow {
   previous_delinquency?: boolean
   late_payment_count?: number
   days_late_avg?: number
+  days_past_due?: number
   last_payment_date?: string
   notes?: string
   _errors?: string[]
@@ -103,6 +104,10 @@ const SHARED_COLUMNS: Record<string, keyof TenantImportRow> = {
   "avg days late":      "days_late_avg",
   "average days late":  "days_late_avg",
   "days late avg":      "days_late_avg",
+  "days past due":      "days_past_due",
+  "days overdue":       "days_past_due",
+  "days delinquent":    "days_past_due",
+  "dpd":                "days_past_due",
   "last payment date":  "last_payment_date",
   "last paid date":     "last_payment_date",
   "last paid":          "last_payment_date",
@@ -423,7 +428,8 @@ export function convertRow(
         break
       }
       case "rent_due_day":
-      case "late_payment_count": {
+      case "late_payment_count":
+      case "days_past_due": {
         const n = parseInt(val)
         if (!isNaN(n)) r[field] = n
         break
