@@ -315,10 +315,13 @@ function formatTimelineDate(date: Date): string {
 }
 
 function relativeDays(date: Date): string {
-  const diff = Math.ceil((date.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-  if (diff <= 0) return "today"
-  if (diff === 1) return "tomorrow"
-  return `in ${diff} days`
+  const now = new Date()
+  const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const targetMidnight = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  const dayDiff = Math.round((targetMidnight.getTime() - todayMidnight.getTime()) / 86_400_000)
+  if (dayDiff <= 0) return "today"
+  if (dayDiff === 1) return "tomorrow"
+  return `in ${dayDiff} days`
 }
 
 interface ScheduledAction {
