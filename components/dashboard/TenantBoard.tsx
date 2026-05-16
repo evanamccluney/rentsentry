@@ -377,9 +377,10 @@ function computeScheduledDate(t: Tenant): ScheduledAction | null {
     } catch { return null }
   }
 
-  // Rule D: Balance-carrying non-legal tiers — schedule 2 hours out for immediate PM review
+  // Rule D: Balance-carrying non-legal tiers — send at next automation cron (10:00 AM UTC daily)
   if ((t.tier === "reminder" || t.tier === "payment_plan") && (t.balance_due ?? 0) > 0) {
-    const sendDate = new Date(now.getTime() + 2 * 60 * 60 * 1000)
+    const todayRun = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 10, 0, 0))
+    const sendDate = todayRun > now ? todayRun : new Date(todayRun.getTime() + 86_400_000)
     return {
       what: t.tier === "payment_plan" ? "Payment plan offer" : "Payment reminder",
       date: sendDate,
