@@ -10,7 +10,7 @@ const ACTION_CONTEXT: Record<string, string> = {
   card_expiry_alert:
     "a payment method expiry alert — the card or account on file is expiring soon and needs to be updated before rent is due",
   split_pay_offer:
-    "an installment plan offer — let the tenant know a payment plan is available and invite them to reply to this message to set one up.",
+    "an installment plan offer — let the tenant know their property manager is offering to split their balance into payments and that a link to choose their plan is included in this message. Keep it warm and clear.",
   cash_for_keys:
     "a time-sensitive message that the property manager needs to speak with the tenant about their housing situation today — do not hint at what the conversation is about or mention move-out",
   legal_packet:
@@ -109,7 +109,7 @@ export function fallbackSms(actionType: string, name: string, days: number, bala
   const firstName = name.split(" ")[0]
   const feeWarning = lateFeeDay && days < lateFeeDay ? ` Pay before Day ${lateFeeDay} to avoid a late fee.` : ""
   if (actionType === "split_pay_offer") {
-    return `Hi ${firstName}, your rent is ${days} days past due — $${balance.toLocaleString()} owed. Reply to this message to set up a payment plan. Reply STOP to opt out.`
+    return `Hi ${firstName}, your balance of $${balance.toLocaleString()} is ${days} days past due. Choose a payment plan that works for you: [link] Reply STOP to opt out.`
   }
   if (days <= 1) {
     return `Hi ${firstName}, your rent is due.${feeWarning} Reply to this message with any questions. Reply STOP to opt out.`

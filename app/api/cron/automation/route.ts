@@ -181,7 +181,7 @@ export async function GET(req: NextRequest) {
   const userIds = [...new Set(tenants.map((t: { user_id: string }) => t.user_id))]
   const { data: profiles } = await supabase
     .from("profiles")
-    .select("id, auto_mode, auto_payment_plan_offers, pm_phone, pm_alerts_enabled, escalation_preset, reminder_day, payment_plan_day, pay_or_quit_day, cfk_review_day, attorney_review_day, repeat_offender_accelerator_days, pre_due_risk_outreach_enabled, pre_due_risk_review_days_before_due, require_attorney_before_notice, payment_plan_before_notice, custom_escalation_notes, stripe_account_id")
+    .select("id, auto_mode, auto_payment_plan_offers, pm_phone, pm_alerts_enabled, escalation_preset, reminder_day, payment_plan_day, pay_or_quit_day, cfk_review_day, attorney_review_day, repeat_offender_accelerator_days, pre_due_risk_outreach_enabled, pre_due_risk_review_days_before_due, require_attorney_before_notice, payment_plan_before_notice, custom_escalation_notes, stripe_account_id, pm_display_name")
     .in("id", userIds)
 
   const autoModeByUser = new Map<string, boolean>(
@@ -195,6 +195,9 @@ export async function GET(req: NextRequest) {
   )
   const stripeConnectedByUser = new Map<string, boolean>(
     (profiles ?? []).map((p: { id: string; stripe_account_id?: string | null }) => [p.id, !!p.stripe_account_id])
+  )
+  const pmDisplayNameByUser = new Map<string, string | null>(
+    (profiles ?? []).map((p: { id: string; pm_display_name?: string | null }) => [p.id, p.pm_display_name?.trim() || null])
   )
 
   const results = {
@@ -374,9 +377,11 @@ export async function GET(req: NextRequest) {
           const offerUrl = `${process.env.NEXT_PUBLIC_APP_URL}/pay/offer/${offerToken}`
           const expiresAt = new Date(Date.now() + 7 * 86_400_000).toISOString()
           const firstName = t.name.split(" ")[0]
+          const pmName = pmDisplayNameByUser.get(t.user_id)
+          const from = pmName ? `${pmName} (your property manager)` : "your property manager"
           const smsBody = includesNextMonth
-            ? `Hi ${firstName}, your PM is splitting your $${totalAmount.toLocaleString()} balance (past due + upcoming rent) into up to ${maxInstallments} payments. Choose your plan: ${offerUrl} Reply STOP to opt out.`
-            : `Hi ${firstName}, your PM is offering to split your $${totalAmount.toLocaleString()} past-due balance into installments. Choose your plan: ${offerUrl} Reply STOP to opt out.`
+            ? `Hi ${firstName}, ${from} is splitting your $${totalAmount.toLocaleString()} balance (past due + upcoming rent) into up to ${maxInstallments} payments. Choose your plan: ${offerUrl} Reply STOP to opt out.`
+            : `Hi ${firstName}, ${from} is offering to split your $${totalAmount.toLocaleString()} past-due balance into installments. Choose your plan: ${offerUrl} Reply STOP to opt out.`
           const offerSnapshot = {
             ...snapshot,
             offer_token: offerToken,

@@ -90,6 +90,13 @@ export async function POST(req: NextRequest) {
     const rentAmount: number = body.rentAmount ?? snapshot?.rent_amount ?? 0
     const rentDueDay: number = body.rentDueDay ?? snapshot?.rent_due_day ?? 1
 
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("pm_display_name")
+      .eq("id", user.id)
+      .single()
+    const pmName = profile?.pm_display_name?.trim() || null
+
     const token = generateShortCode()
     const offer = computeOfferParams(balanceDue, rentAmount, rentDueDay)
     const expiresAt = new Date(Date.now() + 7 * 86_400_000).toISOString()
@@ -114,9 +121,11 @@ export async function POST(req: NextRequest) {
     })
 
     const offerUrl = `${process.env.NEXT_PUBLIC_APP_URL}/pay/offer/${token}`
+    const from = pmName ? `${pmName} (your property manager)` : "your property manager"
+    const firstName = (name || "Resident").split(" ")[0]
     const smsBody = offer.includesNextMonth
-      ? `Hi ${name || "Resident"}, your PM is splitting your $${offer.totalAmount.toLocaleString()} balance (last month + upcoming rent) into up to ${offer.maxInstallments} payments. Choose your plan: ${offerUrl} Reply STOP to opt out.`
-      : `Hi ${name || "Resident"}, your PM is offering to split your $${offer.totalAmount.toLocaleString()} balance into installments. Choose your plan: ${offerUrl} Reply STOP to opt out.`
+      ? `Hi ${firstName}, ${from} is splitting your $${offer.totalAmount.toLocaleString()} balance (past due + upcoming rent) into up to ${offer.maxInstallments} payments. Choose your plan: ${offerUrl} Reply STOP to opt out.`
+      : `Hi ${firstName}, ${from} is offering to split your $${offer.totalAmount.toLocaleString()} balance into installments. Choose your plan: ${offerUrl} Reply STOP to opt out.`
 
     const normalizedPhone = normalizePhone(phone)
     if (normalizedPhone) {
