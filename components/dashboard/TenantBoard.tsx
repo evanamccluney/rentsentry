@@ -2682,43 +2682,7 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
           </p>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap w-full lg:w-auto">
-          <div className="relative flex-1 sm:max-w-xs">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#71717a]" />
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search tenants…"
-              className="bg-[#18181b] border border-[#3f3f46] text-white text-sm rounded-xl pl-9 pr-8 py-2 w-full placeholder:text-[#52525b] focus:outline-none focus:border-[#52525b]"
-            />
-            {search && (
-              <button onClick={() => setSearch("")} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#4b5563] hover:text-white">
-                <X size={13} />
-              </button>
-            )}
-          </div>
-
-          <select
-            value={sortBy}
-            onChange={e => setSortBy(e.target.value as typeof sortBy)}
-            className="bg-[#18181b] border border-[#3f3f46] text-white text-sm rounded-xl px-3 py-2 focus:outline-none focus:border-[#52525b]"
-          >
-            <option value="tier">Risk tier</option>
-            <option value="balance">Balance ↓</option>
-            <option value="name">Name A–Z</option>
-          </select>
-
-          {properties.length > 1 && (
-            <select
-              value={propertyFilter}
-              onChange={e => setPropertyFilter(e.target.value)}
-              className="bg-[#18181b] border border-[#3f3f46] text-white text-sm rounded-xl px-3 py-2 focus:outline-none focus:border-[#52525b]"
-            >
-              <option value="">All properties</option>
-              {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          )}
-
+        <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => setAddingTenant(true)}
             className="flex items-center gap-1.5 bg-white/[0.06] hover:bg-white/[0.10] border border-[#3f3f46] text-white font-semibold px-3 py-2 rounded-xl text-sm transition-colors"
@@ -2735,9 +2699,44 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
         </div>
       </div>
 
-      {/* Filter bar — always visible */}
-      <div className="mb-4">
-        <FilterBar active={activeFilter} counts={counts} onChange={f => { setActiveFilter(f); setTierFilter("") }} />
+      {/* Toolbar: filter tabs + search + sort in one row */}
+      <div className="flex items-center gap-2 mb-5 flex-wrap">
+        <div className="flex-1 min-w-0">
+          <FilterBar active={activeFilter} counts={counts} onChange={f => { setActiveFilter(f); setTierFilter("") }} />
+        </div>
+        <div className="relative shrink-0">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#71717a]" />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search…"
+            className="bg-[#18181b] border border-[#3f3f46] text-white text-sm rounded-xl pl-8 pr-7 py-2 w-36 placeholder:text-[#52525b] focus:outline-none focus:border-[#52525b] focus:w-48 transition-all"
+          />
+          {search && (
+            <button onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-[#4b5563] hover:text-white">
+              <X size={11} />
+            </button>
+          )}
+        </div>
+        <select
+          value={sortBy}
+          onChange={e => setSortBy(e.target.value as typeof sortBy)}
+          className="shrink-0 bg-[#18181b] border border-[#3f3f46] text-[#a1a1aa] text-sm rounded-xl px-2.5 py-2 focus:outline-none focus:border-[#52525b]"
+        >
+          <option value="tier">Risk tier</option>
+          <option value="balance">Balance ↓</option>
+          <option value="name">Name A–Z</option>
+        </select>
+        {properties.length > 1 && (
+          <select
+            value={propertyFilter}
+            onChange={e => setPropertyFilter(e.target.value)}
+            className="shrink-0 bg-[#18181b] border border-[#3f3f46] text-[#a1a1aa] text-sm rounded-xl px-2.5 py-2 focus:outline-none focus:border-[#52525b]"
+          >
+            <option value="">All properties</option>
+            {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        )}
       </div>
 
           {/* Portfolio summary strip */}
