@@ -2683,7 +2683,7 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
         </div>
 
         <div className="flex items-center gap-2 flex-wrap w-full lg:w-auto">
-          <div className="relative flex-1 lg:hidden">
+          <div className="relative flex-1 sm:max-w-xs">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#71717a]" />
             <input
               value={search}
@@ -2701,7 +2701,7 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
           <select
             value={sortBy}
             onChange={e => setSortBy(e.target.value as typeof sortBy)}
-            className="lg:hidden bg-[#18181b] border border-[#3f3f46] text-white text-sm rounded-xl px-3 py-2 focus:outline-none focus:border-[#52525b]"
+            className="bg-[#18181b] border border-[#3f3f46] text-white text-sm rounded-xl px-3 py-2 focus:outline-none focus:border-[#52525b]"
           >
             <option value="tier">Risk tier</option>
             <option value="balance">Balance ↓</option>
@@ -2712,7 +2712,7 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
             <select
               value={propertyFilter}
               onChange={e => setPropertyFilter(e.target.value)}
-              className="lg:hidden bg-[#18181b] border border-[#3f3f46] text-white text-sm rounded-xl px-3 py-2 focus:outline-none focus:border-[#52525b]"
+              className="bg-[#18181b] border border-[#3f3f46] text-white text-sm rounded-xl px-3 py-2 focus:outline-none focus:border-[#52525b]"
             >
               <option value="">All properties</option>
               {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -2735,80 +2735,10 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
         </div>
       </div>
 
-      {/* Two-column layout: left filter panel on desktop, stacked on mobile */}
-      <div className="lg:flex lg:gap-6 lg:items-start">
-
-        {/* Desktop left filter panel */}
-        <div className="max-lg:hidden flex flex-col w-44 shrink-0 gap-0.5 pt-0.5">
-          {FILTER_TABS.map(tab => {
-            const count = counts[tab.key]
-            const isActive = activeFilter === tab.key
-            return (
-              <button
-                key={tab.key}
-                onClick={() => { setActiveFilter(tab.key); setTierFilter("") }}
-                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  isActive
-                    ? "bg-[#27272a] text-white"
-                    : "text-[#71717a] hover:text-[#a1a1aa] hover:bg-white/[0.04]"
-                }`}
-              >
-                <span>{tab.label}</span>
-                {count > 0 && (
-                  <span className={`text-xs tabular-nums font-medium ${isActive ? "text-white/60" : "text-[#52525b]"}`}>
-                    {count}
-                  </span>
-                )}
-              </button>
-            )
-          })}
-
-          <div className="h-px bg-[#27272a] my-2.5" />
-
-          <div className="relative">
-            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#71717a]" />
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search…"
-              className="bg-[#18181b] border border-[#3f3f46] text-white text-sm rounded-lg pl-8 pr-6 py-1.5 w-full placeholder:text-[#52525b] focus:outline-none focus:border-[#52525b]"
-            />
-            {search && (
-              <button onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-[#52525b] hover:text-white">
-                <X size={11} />
-              </button>
-            )}
-          </div>
-
-          <select
-            value={sortBy}
-            onChange={e => setSortBy(e.target.value as typeof sortBy)}
-            className="bg-[#18181b] border border-[#3f3f46] text-[#a1a1aa] text-sm rounded-lg px-2.5 py-1.5 w-full focus:outline-none focus:border-[#52525b] mt-1"
-          >
-            <option value="tier">By risk tier</option>
-            <option value="balance">By balance</option>
-            <option value="name">By name A–Z</option>
-          </select>
-
-          {properties.length > 1 && (
-            <select
-              value={propertyFilter}
-              onChange={e => setPropertyFilter(e.target.value)}
-              className="bg-[#18181b] border border-[#3f3f46] text-[#a1a1aa] text-sm rounded-lg px-2.5 py-1.5 w-full focus:outline-none focus:border-[#52525b] mt-1"
-            >
-              <option value="">All properties</option>
-              {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          )}
-        </div>
-
-        {/* Main content */}
-        <div className="flex-1 min-w-0">
-
-          {/* Mobile filter bar */}
-          <div className="lg:hidden mb-4">
-            <FilterBar active={activeFilter} counts={counts} onChange={f => { setActiveFilter(f); setTierFilter("") }} />
-          </div>
+      {/* Filter bar — always visible */}
+      <div className="mb-4">
+        <FilterBar active={activeFilter} counts={counts} onChange={f => { setActiveFilter(f); setTierFilter("") }} />
+      </div>
 
           {/* Portfolio summary strip */}
           <PortfolioSummaryStrip stats={portfolioStats} />
@@ -2982,8 +2912,6 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
             </div>
           )}
 
-        </div>
-      </div>
     </div>
   )
 }
