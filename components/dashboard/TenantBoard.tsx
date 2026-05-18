@@ -2524,7 +2524,7 @@ function Section({
       </div>
 
       {/* Desktop: table-style rows */}
-      <div className="hidden lg:block bg-[#18181b] border border-[#3f3f46] rounded-xl overflow-hidden">
+      <div className="max-lg:hidden bg-[#18181b] border border-[#3f3f46] rounded-xl overflow-hidden">
         <div className="grid grid-cols-[minmax(0,2fr)_130px_160px_minmax(0,1.5fr)_220px] gap-3 px-5 py-2.5 border-b border-[#27272a]">
           <span className="text-[#71717a] text-xs uppercase tracking-wide font-medium">Tenant</span>
           <span className="text-[#71717a] text-xs uppercase tracking-wide font-medium text-right">Balance</span>
@@ -2739,7 +2739,7 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
       <div className="lg:flex lg:gap-6 lg:items-start">
 
         {/* Desktop left filter panel */}
-        <div className="hidden lg:flex lg:flex-col lg:w-44 lg:shrink-0 gap-0.5 pt-0.5">
+        <div className="max-lg:hidden flex flex-col w-44 shrink-0 gap-0.5 pt-0.5">
           {FILTER_TABS.map(tab => {
             const count = counts[tab.key]
             const isActive = activeFilter === tab.key
