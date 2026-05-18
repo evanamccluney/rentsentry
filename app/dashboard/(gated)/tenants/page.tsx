@@ -8,6 +8,7 @@ export default async function TenantsPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
+  const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000)
   const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
 
   const [tenants, properties, profile, recentActivity, paymentsThisMonth] = await Promise.all([
@@ -18,7 +19,7 @@ export default async function TenantsPage() {
       .from("interventions")
       .select("tenant_id, type, sent_at, status, snapshot")
       .eq("user_id", user!.id)
-      .gte("sent_at", monthStart.toISOString())
+      .gte("sent_at", fourteenDaysAgo.toISOString())
       .order("sent_at", { ascending: false })
       .then(r => r.data ?? []),
     supabase

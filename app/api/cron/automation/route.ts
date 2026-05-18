@@ -157,6 +157,7 @@ export async function GET(req: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
+  const now = new Date()
 
   // ── Fire AI-scheduled SMS messages ───────────────────────────────────────────
   const { data: scheduledMessages } = await supabase
@@ -383,8 +384,11 @@ export async function GET(req: NextRequest) {
       continue
     }
 
+    const isAutoEligibleTier = risk.tier === "reminder" || risk.tier === "payment_plan"
     const manualIntakeHold = t.intake_action === "manual_review" || t.intake_action === "no_contact"
-    if (hasBalance && manualIntakeHold && t.auto_contact_approved === false) {
+    // Let auto mode override the manual_review gate for reminder/payment_plan tiers
+    // — landlord already opted in by enabling auto mode and configuring escalation rules
+    if (hasBalance && manualIntakeHold && t.auto_contact_approved === false && !(autoMode && isAutoEligibleTier)) {
       triggered = true
       results.evaluated++
       const alreadyLogged = await recentlySent(supabase, t.id, "intake_review_required", 30)

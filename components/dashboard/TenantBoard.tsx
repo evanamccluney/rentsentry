@@ -346,6 +346,27 @@ function computeScheduledDate(t: Tenant, pendingScheduled?: RecentActivity | nul
   return null
 }
 
+// Returns the next 8am UTC cron run at or after the given date
+function nextCronRunAfter(d: Date): Date {
+  const atCron = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 8, 0, 0))
+  return atCron > d ? atCron : new Date(atCron.getTime() + 86_400_000)
+}
+
+// Per-tenant next auto-send date: respects the cron's 14-day dedup window
+function computeNextAutoSendDate(tenantId: string, recentActivity: RecentActivity[]): Date {
+  const DEDUP_DAYS = 14
+  const now = new Date()
+  // Both "sent" and "dry_run" count toward the cron's dedup window
+  const lastLogged = recentActivity
+    .filter(a => a.tenant_id === tenantId && (a.status === "sent" || a.status === "dry_run"))
+    .sort((a, b) => new Date(b.sent_at).getTime() - new Date(a.sent_at).getTime())[0]
+  if (lastLogged) {
+    const dedupExpiry = new Date(new Date(lastLogged.sent_at).getTime() + DEDUP_DAYS * 86_400_000)
+    if (dedupExpiry > now) return nextCronRunAfter(dedupExpiry)
+  }
+  return nextCronRunAfter(now)
+}
+
 function nextRentDueDate(dueDayOfMonth = 1): Date {
   const now = new Date()
   const dueDay = Math.min(Math.max(dueDayOfMonth, 1), 28)
@@ -395,17 +416,24 @@ function getAutoStatus(
   autoMode: boolean
 ): AutoStatus {
   if (pausedTenants.has(t.id)) return "paused"
+
+  const isAutoEligibleTier = t.tier === "reminder" || t.tier === "payment_plan"
   const manualIntakeHold = t.intake_action === "manual_review" || t.intake_action === "no_contact"
-  if (autoMode && manualIntakeHold && (t.balance_due ?? 0) > 0 && t.auto_contact_approved === false) return "needs_review"
+  // Gate on manual intake hold — but when auto mode is on, let reminder/payment_plan tiers
+  // through automatically (landlord opted in by enabling auto mode + setting escalation rules)
+  const gateOnIntake = manualIntakeHold
+    && (t.balance_due ?? 0) > 0
+    && t.auto_contact_approved === false
+    && !(autoMode && isAutoEligibleTier)
+  if (gateOnIntake) return "needs_review"
+
   if (t.tier === "healthy") return "healthy"
 
-  // "sent" = an actual intervention was delivered this month (not dry_run)
-  const wasSentThisMonth = recentActivity.some(
+  const wasSentRecently = recentActivity.some(
     a => a.tenant_id === t.id && a.status === "sent"
   )
-  if (wasSentThisMonth) return "sent"
+  if (wasSentRecently) return "sent"
 
-  // "queued" = auto mode on + tenant is eligible for automated outreach
   const hasPendingScheduled = recentActivity.some(
     a => a.tenant_id === t.id
       && (a.type === "scheduled_split_pay_offer" || a.type === "scheduled_sms")
@@ -414,7 +442,7 @@ function getAutoStatus(
       && new Date(a.snapshot.scheduled_for) > new Date()
   )
   const isAutoEligible = hasPendingScheduled
-    || ((t.tier === "reminder" || t.tier === "payment_plan") && (t.balance_due ?? 0) > 0)
+    || (isAutoEligibleTier && (t.balance_due ?? 0) > 0)
   if (autoMode && isAutoEligible) return "queued"
 
   return "needs_review"
@@ -490,7 +518,12 @@ function getSystemMessage(
         reason: scheduled.reason,
       }
     }
-    return { primary: "Auto mode active · queued for outreach" }
+    const nextSend = computeNextAutoSendDate(t.id, recentActivity)
+    const actionLabel = t.tier === "payment_plan" ? "payment plan offer" : t.tier === "reminder" ? "balance reminder" : "message"
+    return {
+      primary: `Sending ${formatActionDate(nextSend)} (${relativeDays(nextSend)})`,
+      reason: `Auto · ${actionLabel}`,
+    }
   }
 
   // needs_review: PM must act, or auto mode is off for automated tiers
