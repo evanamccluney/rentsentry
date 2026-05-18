@@ -518,12 +518,8 @@ function getSystemMessage(
         reason: scheduled.reason,
       }
     }
-    const nextSend = computeNextAutoSendDate(t.id, recentActivity)
-    const actionLabel = t.tier === "payment_plan" ? "payment plan offer" : t.tier === "reminder" ? "balance reminder" : "message"
-    return {
-      primary: `Sending ${formatActionDate(nextSend)} (${relativeDays(nextSend)})`,
-      reason: `Auto · ${actionLabel}`,
-    }
+    const actionLabel = t.tier === "payment_plan" ? "Payment plan offer" : t.tier === "reminder" ? "Balance reminder" : "Message"
+    return { primary: actionLabel, reason: "Auto" }
   }
 
   // needs_review: PM must act, or auto mode is off for automated tiers
@@ -1739,7 +1735,13 @@ function TenantCard({
       && a.snapshot?.scheduled_for
       && new Date(a.snapshot.scheduled_for) > new Date()
   )
-  const scheduledAction = effectiveStatus === "queued" ? computeScheduledDate(t, pendingScheduledForCard) : null
+  const scheduledAction = effectiveStatus === "queued"
+    ? (computeScheduledDate(t, pendingScheduledForCard) ?? {
+        what: t.tier === "payment_plan" ? "Payment plan offer" : t.tier === "reminder" ? "Balance reminder" : "Message",
+        date: computeNextAutoSendDate(t.id, recentActivity),
+        reason: "Auto",
+      })
+    : null
 
   // Detect payment plan offer sent 3+ days ago with no response yet
   const pendingPlanOffer = (() => {
@@ -1989,7 +1991,14 @@ function TenantCard({
             </div>
           </div>
           {/* Next Action */}
-          <div className="text-xs text-[#9ca3af] truncate">{effectiveSystemMsg.primary || "—"}</div>
+          <div className="text-xs text-[#9ca3af] flex items-center gap-1 min-w-0">
+            <span className="truncate">{effectiveSystemMsg.primary || "—"}</span>
+            {effectiveStatus === "queued" && scheduledAction && (
+              <span className="shrink-0 text-[#6366f1] font-medium tabular-nums">
+                · <Countdown targetDate={scheduledAction.date} />
+              </span>
+            )}
+          </div>
           {/* Actions */}
           <div className="flex items-center gap-1.5 justify-end">
             {needsIntakeReview && (
