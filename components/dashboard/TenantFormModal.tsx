@@ -1,7 +1,6 @@
 "use client"
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { createClient } from "@/lib/supabase/client"
 import { X } from "lucide-react"
 import { toast } from "sonner"
 import { normalizePhone } from "@/lib/phone"
@@ -48,7 +47,12 @@ interface Props {
 
 export default function TenantFormModal({ mode, properties, initial, onClose }: Props) {
   const router = useRouter()
-  const [form, setForm] = useState<TenantData>({ ...EMPTY, ...initial })
+  const [form, setForm] = useState<TenantData>(() => {
+    const sanitized = Object.fromEntries(
+      Object.entries(initial ?? {}).map(([k, v]) => [k, v === null ? "" : v])
+    )
+    return { ...EMPTY, ...sanitized }
+  })
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const hasExistingBalance = (parseFloat(form.balance_due) || 0) > 0
@@ -92,65 +96,90 @@ export default function TenantFormModal({ mode, properties, initial, onClose }: 
       return
     }
     setSaving(true)
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { toast.error("Not authenticated."); setSaving(false); return }
-
-    const payload = {
-      name: form.name.trim(),
-      email: form.email.trim() || null,
-      phone: (normalizePhone(form.phone) ?? form.phone.trim()) || null,
-      unit: form.unit.trim(),
-      property_id: form.property_id,
-      rent_amount: parseFloat(form.rent_amount) || 0,
-      balance_due: parseFloat(form.balance_due) || 0,
-      rent_due_day: parseInt(form.rent_due_day) || 1,
-      payment_method: form.payment_method || "unknown",
-      card_expiry: form.card_expiry.trim() || null,
-      lease_start: form.lease_start || null,
-      lease_end: form.lease_end || null,
-      last_payment_date: form.last_payment_date || null,
-      delinquency_start_date: form.delinquency_start_date || null,
-      intake_action: hasExistingBalance ? form.intake_action : null,
-      days_late_avg: parseFloat(form.days_late_avg) || 0,
-      late_payment_count: parseInt(form.late_payment_count) || 0,
-      previous_delinquency: form.previous_delinquency,
-      source: "manual",
-      status: "active",
-      user_id: user.id,
-    }
-
-    if (mode === "add") {
-      const res = await fetch("/api/tenants", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      })
-      if (!res.ok) {
-        const { error } = await res.json().catch(() => ({ error: "Failed to add tenant" }))
-        toast.error(error ?? "Failed to add tenant")
-        setSaving(false)
-        return
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    try {
+      const payload = {
+        name: form.name.trim(),
+        email: form.email.trim() || null,
+        phone: (normalizePhone(form.phone) ?? form.phone.trim()) || null,
+        unit: form.unit.trim(),
+        property_id: form.property_id,
+        rent_amount: parseFloat(form.rent_amount) || 0,
+        balance_due: parseFloat(form.balance_due) || 0,
+        rent_due_day: parseInt(form.rent_due_day) || 1,
+        payment_method: form.payment_method || "unknown",
+        card_expiry: form.card_expiry.trim() || null,
+        lease_start: form.lease_start || null,
+        lease_end: form.lease_end || null,
+        last_payment_date: form.last_payment_date || null,
+        delinquency_start_date: form.delinquency_start_date || null,
+        intake_action: hasExistingBalance ? form.intake_action : null,
+        days_late_avg: parseFloat(form.days_late_avg) || 0,
+        late_payment_count: parseInt(form.late_payment_count) || 0,
+        previous_delinquency: form.previous_delinquency,
+        source: "manual",
+        status: "active",
       }
-      toast.success(`${form.name} added.`)
-    } else {
-      const res = await fetch(`/api/tenants/${initial!.id!}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      })
-      if (!res.ok) {
-        const { error } = await res.json().catch(() => ({ error: "Update failed" }))
-        toast.error(error ?? "Update failed")
-        setSaving(false)
-        return
-      }
-      toast.success("Tenant updated.")
-    }
 
-    setSaving(false)
-    onClose()
-    router.refresh()
+      const abort = new AbortController()
+      timeout = setTimeout(() => abort.abort(), 15000)
+      let success = false
+
+      try {
+        if (mode === "add") {
+          const res = await fetch("/api/tenants", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            signal: abort.signal,
+          })
+          if (!res.ok) {
+            const { error } = await res.json().catch(() => ({ error: "Failed to add tenant" }))
+            toast.error(error ?? "Failed to add tenant")
+            return
+          }
+          toast.success(`${form.name} added.`)
+          success = true
+        } else {
+          const res = await fetch(`/api/tenants/${initial!.id!}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            signal: abort.signal,
+          })
+          if (!res.ok) {
+            const { error } = await res.json().catch(() => ({ error: "Update failed" }))
+            toast.error(error ?? "Update failed")
+            return
+          }
+          const saved = await res.json().catch(() => null)
+          const enteredBalance = parseFloat(form.balance_due) || 0
+          const savedBalance = saved?.balance_due != null ? Number(saved.balance_due) : null
+          if (savedBalance !== null && Math.abs(savedBalance - enteredBalance) > 0.01) {
+            toast.success(`Updated — balance saved as $${savedBalance.toLocaleString()} (adjusted from $${enteredBalance.toLocaleString()}).`)
+          } else {
+            toast.success("Tenant updated.")
+          }
+          success = true
+        }
+      } catch (err) {
+        console.error("handleSubmit fetch error:", err)
+        const isTimeout = err instanceof Error && err.name === "AbortError"
+        toast.error(isTimeout ? "Request timed out — please try again." : "Network error. Please try again.")
+      } finally {
+        clearTimeout(timeout)
+      }
+
+      if (success) {
+        onClose()
+        router.refresh()
+      }
+    } catch (err) {
+      console.error("handleSubmit error:", err)
+      toast.error("An unexpected error occurred.")
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (

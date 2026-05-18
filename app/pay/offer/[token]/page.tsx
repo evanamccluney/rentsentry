@@ -33,6 +33,7 @@ export default async function OfferPage({ params }: { params: Promise<{ token: s
     rent_amount?: number
     // split_pay_offer fields
     total_amount?: number
+    balance_due?: number
     max_installments?: number
     min_installments?: number
     includes_next_month?: boolean
@@ -148,6 +149,8 @@ export default async function OfferPage({ params }: { params: Promise<{ token: s
 
   // ── split_pay_offer: tenant chooses installment count ──────────────────────
   const totalAmount = snap.total_amount ?? 0
+  const balanceDue = snap.balance_due ?? totalAmount
+  const rentAmount = snap.rent_amount ?? 0
   const maxInstallments = snap.max_installments ?? 3
   const minInstallments = snap.min_installments ?? 2
   const includesNextMonth = snap.includes_next_month ?? false
@@ -163,21 +166,6 @@ export default async function OfferPage({ params }: { params: Promise<{ token: s
           <h1 className="text-2xl font-bold text-white mb-2">Choose your plan</h1>
           <p className="text-[#71717a] text-sm">
             {pmName} is offering you a payment plan for Unit {tenant?.unit}
-            {includesNextMonth && (
-              <span className="block mt-1 text-amber-400/80 text-xs">
-                This covers your past-due balance and upcoming rent
-              </span>
-            )}
-          </p>
-        </div>
-
-        <div className="bg-[#111113] border border-[#27272a] rounded-xl p-5 mb-4">
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-[#71717a] text-xs uppercase tracking-wide">Total to cover</span>
-            <span className="text-white font-bold text-lg">${totalAmount.toLocaleString()}</span>
-          </div>
-          <p className="text-[#52525b] text-xs mb-1">
-            Pick how many payments work best for you. Payments are due every 2 weeks starting today.
           </p>
         </div>
 
@@ -186,8 +174,11 @@ export default async function OfferPage({ params }: { params: Promise<{ token: s
           tenantName={tenant?.name ?? ""}
           offerType="split_pay_offer"
           totalAmount={totalAmount}
+          balanceDue={balanceDue}
+          rentAmount={rentAmount}
           maxInstallments={maxInstallments}
           minInstallments={minInstallments}
+          includesNextMonth={includesNextMonth}
           feeRate={FEE_RATE}
         />
 

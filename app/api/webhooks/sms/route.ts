@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
   const lastTenDigits = fromPhone.replace(/\D/g, "").slice(-10)
   const { data: tenantCandidates } = await supabase
     .from("tenants")
-    .select("id, name, unit, user_id, balance_due, rent_amount, last_payment_date, rent_due_day, days_late_avg, late_payment_count, previous_delinquency, phone, stripe_customer_id, autopay_monthly, rent_reporting_opted_in")
+    .select("id, name, unit, user_id, balance_due, rent_amount, last_payment_date, rent_due_day, days_late_avg, late_payment_count, previous_delinquency, phone, stripe_customer_id, autopay_monthly")
     .like("phone", `%${lastTenDigits}`)
     .eq("status", "active")
 

@@ -5,50 +5,6 @@ import { createClient as createServiceClient } from "@supabase/supabase-js"
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!)
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function sendRentReportingOffer(supabase: any, tenantId: string, landlordId: string, amountPaid: number) {
-  try {
-    const { data: tenant } = await supabase
-      .from("tenants")
-      .select("name, phone, sms_opted_out, rent_reporting_opted_in")
-      .eq("id", tenantId)
-      .single()
-
-    if (!tenant || !tenant.phone || tenant.sms_opted_out || tenant.rent_reporting_opted_in) return
-
-    const { data: alreadyOffered } = await supabase
-      .from("interventions")
-      .select("id")
-      .eq("tenant_id", tenantId)
-      .eq("type", "rent_reporting_offer_sent")
-      .limit(1)
-
-    if ((alreadyOffered?.length ?? 0) > 0) return
-
-    const { normalizePhone } = await import("@/lib/phone")
-    const phone = normalizePhone(tenant.phone)
-    if (!phone) return
-
-    const firstName = tenant.name.split(" ")[0]
-    const twilio = (await import("twilio")).default
-    const tw = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
-    await tw.messages.create({
-      from: process.env.TWILIO_PHONE_NUMBER!,
-      to: phone,
-      body: `Hi ${firstName}, your $${amountPaid.toLocaleString()} rent payment was received! Reply REPORT to submit it to Experian & Equifax and build your credit history. Reply STOP to opt out.`,
-    })
-    await supabase.from("interventions").insert({
-      tenant_id: tenantId,
-      user_id: landlordId,
-      type: "rent_reporting_offer_sent",
-      status: "pending",
-      sent_at: new Date().toISOString(),
-      notes: `Rent reporting offer sent after $${amountPaid} payment`,
-    })
-  } catch (e) {
-    console.error(`stripe-connect: rent reporting offer failed — tenant ${tenantId}:`, e)
-  }
-}
-
 export async function POST(req: NextRequest) {
   const sig = req.headers.get("stripe-signature")!
   const body = await req.text()
@@ -172,8 +128,6 @@ export async function POST(req: NextRequest) {
       },
     })
 
-    // Offer credit reporting after payment (only if they haven't opted in yet)
-    await sendRentReportingOffer(supabase, tenantId, landlordId, amountPaid)
   }
 
   // ── Session expired unpaid — nudge tenant to request a fresh link ──────────

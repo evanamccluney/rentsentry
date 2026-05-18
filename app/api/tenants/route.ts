@@ -4,6 +4,7 @@ import { revalidateTag } from "next/cache"
 import { normalizePhone } from "@/lib/phone"
 import { planLimitFor, isOnTrial } from "@/lib/plan-limits"
 
+
 function validateTenantBody(body: Record<string, unknown>): string | null {
   if (!body.name || typeof body.name !== "string" || !body.name.trim())
     return "name is required"
@@ -69,7 +70,20 @@ export async function POST(req: NextRequest) {
   const hasExistingBalance = balanceDue > 0
   const intakeAction = typeof body.intake_action === "string" ? body.intake_action : "manual_review"
 
-  const { error } = await supabase.from("tenants").insert({
+  // If PM has Auto Mode on and tenant has a balance, auto-approve instead of requiring manual review
+  let autoApproved = false
+  let pmProfile: { auto_mode?: boolean; pm_phone?: string | null; pm_alerts_enabled?: boolean } | null = null
+  if (hasExistingBalance && intakeAction !== "no_contact") {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("auto_mode, pm_phone, pm_alerts_enabled")
+      .eq("id", user.id)
+      .single()
+    pmProfile = profile
+    autoApproved = !!(profile?.auto_mode)
+  }
+
+  const { data: inserted, error } = await supabase.from("tenants").insert({
     name: body.name.trim(),
     email: body.email || null,
     phone: (normalizePhone(body.phone) ?? body.phone) || null,
@@ -84,17 +98,35 @@ export async function POST(req: NextRequest) {
     lease_end: body.lease_end || null,
     last_payment_date: body.last_payment_date || null,
     delinquency_start_date: body.delinquency_start_date || null,
-    intake_status: hasExistingBalance ? (intakeAction === "no_contact" ? "no_contact" : "needs_review") : "normal",
+    intake_status: hasExistingBalance ? (intakeAction === "no_contact" ? "no_contact" : (autoApproved ? "normal" : "needs_review")) : "normal",
     intake_action: hasExistingBalance ? intakeAction : null,
-    auto_contact_approved: !hasExistingBalance,
+    auto_contact_approved: !hasExistingBalance || autoApproved,
     days_late_avg: Math.max(0, parseFloat(body.days_late_avg) || 0),
     late_payment_count: Math.max(0, parseInt(body.late_payment_count) || 0),
     previous_delinquency: body.previous_delinquency ?? false,
     status: "active",
     user_id: user.id,
-  })
+  }).select("id").single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // PM heads-up SMS when auto-approving a new tenant with an existing balance
+  if (autoApproved && inserted && pmProfile?.pm_alerts_enabled && pmProfile.pm_phone) {
+    const pmPhone = normalizePhone(pmProfile.pm_phone)
+    if (pmPhone) {
+      const tenantFirstName = (body.name as string).trim().split(" ")[0]
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL
+      try {
+        const { default: twilio } = await import("twilio")
+        const tw = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
+        await tw.messages.create({
+          from: process.env.TWILIO_PHONE_NUMBER!,
+          to: pmPhone,
+          body: `RentSentry: ${tenantFirstName} (Unit ${(body.unit as string).trim()}) was added with a $${balanceDue.toLocaleString()} balance. Auto Mode will send them outreach in ~24h. To pause: ${appUrl}/dashboard/tenants/${inserted.id}`,
+        })
+      } catch (e) { console.error("tenants: auto-approve PM heads-up SMS failed:", e) }
+    }
+  }
 
   revalidateTag(`tenant-data-${user.id}`, 'max')
 

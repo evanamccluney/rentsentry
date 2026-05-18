@@ -48,6 +48,7 @@ interface RecentActivity {
   type: string
   sent_at: string
   status: string   // "sent" | "dry_run" | "queued" | "pending"
+  snapshot?: { scheduled_for?: string } | null
 }
 
 interface PaymentRecord {
@@ -330,61 +331,15 @@ interface ScheduledAction {
   reason: string
 }
 
-function computeScheduledDate(t: Tenant): ScheduledAction | null {
+function computeScheduledDate(t: Tenant, pendingScheduled?: RecentActivity | null): ScheduledAction | null {
   const now = new Date()
-  const nextFirst = new Date(now.getFullYear(), now.getMonth() + 1, 1)
-  const hasHistory = (t.late_payment_count ?? 0) >= 2 || (t.days_late_avg ?? 0) >= 3
-  const noPaymentMethod = !t.payment_method || t.payment_method === "unknown"
 
-  // Rule A: Proactive reminder — late history, 3 days before the 1st
-  // Primary rule: works from standard CSV data, no payment metadata needed
-  if ((t.tier === "watch" || t.tier === "reminder") && hasHistory) {
-    const reminderDate = new Date(nextFirst)
-    reminderDate.setDate(reminderDate.getDate() - 3)
-    return {
-      what: "Proactive rent reminder",
-      date: reminderDate,
-      reason: "Late payment history detected",
-    }
-  }
-
-  // Rule B: No payment method — 7 days before the 1st
-  if (t.tier === "watch" && noPaymentMethod) {
-    const alertDate = new Date(nextFirst)
-    alertDate.setDate(alertDate.getDate() - 7)
-    return {
-      what: "Payment method confirmation",
-      date: alertDate,
-      reason: "No payment method on file",
-    }
-  }
-
-  // Rule C (optional): Card expiry data present from payment processor integration
-  if (t.card_expiry && t.tier === "watch") {
-    try {
-      const [month, year] = t.card_expiry.split("/").map(Number)
-      if (!month || !year) return null
-      const expiryDate = new Date(2000 + year, month - 1, 1)
-      const reminderDate = new Date(expiryDate)
-      reminderDate.setDate(reminderDate.getDate() - 7)
-      if (reminderDate > now) {
-        return {
-          what: "Card expiry reminder",
-          date: reminderDate,
-          reason: `Card expires ${formatActionDate(expiryDate)}`,
-        }
-      }
-    } catch { return null }
-  }
-
-  // Rule D: Balance-carrying non-legal tiers — send at next automation cron (10:00 AM UTC daily)
-  if ((t.tier === "reminder" || t.tier === "payment_plan") && (t.balance_due ?? 0) > 0) {
-    const todayRun = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 10, 0, 0))
-    const sendDate = todayRun > now ? todayRun : new Date(todayRun.getTime() + 86_400_000)
-    return {
-      what: t.tier === "payment_plan" ? "Payment plan offer" : "Balance reminder",
-      date: sendDate,
-      reason: `$${(t.balance_due ?? 0).toLocaleString()} outstanding`,
+  // Only show a countdown for explicitly AI-scheduled items — no speculative dates
+  if (pendingScheduled?.snapshot?.scheduled_for) {
+    const scheduledDate = new Date(pendingScheduled.snapshot.scheduled_for)
+    if (!isNaN(scheduledDate.getTime()) && scheduledDate > now) {
+      const label = pendingScheduled.type === "scheduled_split_pay_offer" ? "Payment plan offer" : "Message"
+      return { what: label, date: scheduledDate, reason: "Scheduled via AI" }
     }
   }
 
@@ -450,8 +405,17 @@ function getAutoStatus(
   )
   if (wasSentThisMonth) return "sent"
 
-  // "queued" = auto mode on + system has a concrete scheduled date
-  if (autoMode && computeScheduledDate(t)) return "queued"
+  // "queued" = auto mode on + tenant is eligible for automated outreach
+  const hasPendingScheduled = recentActivity.some(
+    a => a.tenant_id === t.id
+      && (a.type === "scheduled_split_pay_offer" || a.type === "scheduled_sms")
+      && a.status === "pending"
+      && a.snapshot?.scheduled_for
+      && new Date(a.snapshot.scheduled_for) > new Date()
+  )
+  const isAutoEligible = hasPendingScheduled
+    || ((t.tier === "reminder" || t.tier === "payment_plan") && (t.balance_due ?? 0) > 0)
+  if (autoMode && isAutoEligible) return "queued"
 
   return "needs_review"
 }
@@ -510,7 +474,14 @@ function getSystemMessage(
   }
 
   if (status === "queued") {
-    const scheduled = computeScheduledDate(t)
+    const pendingScheduled = recentActivity.find(
+      a => a.tenant_id === t.id
+        && (a.type === "scheduled_split_pay_offer" || a.type === "scheduled_sms")
+        && a.status === "pending"
+        && a.snapshot?.scheduled_for
+        && new Date(a.snapshot.scheduled_for) > new Date()
+    )
+    const scheduled = computeScheduledDate(t, pendingScheduled)
     if (scheduled) {
       const dateStr = formatActionDate(scheduled.date)
       const rel = relativeDays(scheduled.date)
@@ -519,7 +490,7 @@ function getSystemMessage(
         reason: scheduled.reason,
       }
     }
-    return { primary: "Sending today" }
+    return { primary: "Auto mode active · queued for outreach" }
   }
 
   // needs_review: PM must act, or auto mode is off for automated tiers
@@ -577,10 +548,10 @@ function ProblemLine({ t }: { t: Tenant }) {
   if (parts.length === 0) return null
 
   return (
-    <p className="text-xs mb-3 text-[#6b7280] leading-snug">
+    <p className="text-xs mb-3 text-[#9ca3af] leading-snug">
       {parts.map((part, i) => (
         <span key={i}>
-          {i > 0 && <span className="text-[#2e3a50]"> · </span>}
+          {i > 0 && <span className="text-[#3f3f46]"> · </span>}
           {part}
         </span>
       ))}
@@ -712,7 +683,7 @@ function PortfolioSummaryStrip({ stats }: { stats: PortfolioStats }) {
   if (items.length === 0) return null
 
   return (
-    <div className="flex items-center justify-between bg-[#0a0e1a] border border-white/5 rounded-xl px-4 py-2.5 mb-5 gap-3 flex-wrap">
+    <div className="flex items-center justify-between bg-[#111113] border border-[#27272a] rounded-xl px-4 py-2.5 mb-5 gap-3 flex-wrap">
       <div className="flex items-center gap-5 flex-wrap">
         {items.map((item, i) => (
           <div key={i} className="flex items-center gap-2">
@@ -721,7 +692,7 @@ function PortfolioSummaryStrip({ stats }: { stats: PortfolioStats }) {
           </div>
         ))}
       </div>
-      <div className="flex items-center gap-1.5 text-[#2e3a50] text-xs shrink-0">
+      <div className="flex items-center gap-1.5 text-[#52525b] text-xs shrink-0">
         <Activity size={11} />
         {freshness}
       </div>
@@ -748,7 +719,7 @@ function FilterBar({ active, counts, onChange }: {
   onChange: (f: FilterKey) => void
 }) {
   return (
-    <div className="flex items-center gap-1 bg-[#0d1117] border border-white/5 rounded-xl p-1 flex-wrap">
+    <div className="flex items-center gap-1 bg-[#111113] border border-[#27272a] rounded-xl p-1 flex-wrap">
       {FILTER_TABS.map(tab => {
         const count = counts[tab.key]
         const isActive = active === tab.key
@@ -758,14 +729,14 @@ function FilterBar({ active, counts, onChange }: {
             onClick={() => onChange(tab.key)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
               isActive
-                ? "bg-[#111827] text-white border border-white/10 shadow-sm"
-                : "text-[#4b5563] hover:text-[#9ca3af]"
+                ? "bg-[#27272a] text-white border border-[#3f3f46] shadow-sm"
+                : "text-[#71717a] hover:text-[#a1a1aa]"
             }`}
           >
             {tab.label}
             {count > 0 && (
               <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold tabular-nums ${
-                isActive ? "bg-white/10 text-white" : "bg-white/5 text-[#4b5563]"
+                isActive ? "bg-white/10 text-white" : "bg-white/[0.07] text-[#71717a]"
               }`}>
                 {count}
               </span>
@@ -853,7 +824,7 @@ function MarkPaidModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-[#111827] border border-white/10 rounded-2xl w-full max-w-sm mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
+      <div className="bg-[#18181b] border border-[#3f3f46] rounded-2xl w-full max-w-sm mx-4 shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="p-6">
           <div className="flex items-center justify-between mb-5">
             <div>
@@ -922,13 +893,13 @@ function MarkPaidModal({
               />
             </div>
             <div>
-              <label className="text-[#4b5563] text-xs uppercase tracking-wide block mb-1">Note <span className="normal-case text-[#374151]">(optional)</span></label>
+              <label className="text-[#4b5563] text-xs uppercase tracking-wide block mb-1">Note <span className="normal-case text-[#52525b]">(optional)</span></label>
               <input
                 type="text"
                 value={note}
                 onChange={e => setNote(e.target.value)}
                 placeholder="e.g. Venmo, partial payment…"
-                className="w-full bg-[#0d1117] border border-white/10 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-white/20 placeholder:text-[#374151]"
+                className="w-full bg-[#0d1117] border border-white/10 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-white/20 placeholder:text-[#52525b]"
               />
             </div>
           </div>
@@ -1040,7 +1011,7 @@ function TenantAIModal({ tenant, onClose }: { tenant: Tenant; onClose: () => voi
     <>
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="bg-[#111827] border border-white/10 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-lg shadow-2xl flex flex-col"
+        className="bg-[#18181b] border border-white/10 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-lg shadow-2xl flex flex-col"
         style={{ maxHeight: "85vh" }}
         onClick={e => e.stopPropagation()}
       >
@@ -1123,7 +1094,7 @@ function TenantAIModal({ tenant, onClose }: { tenant: Tenant; onClose: () => voi
                     onChange={e => setSmsDrafts(prev => ({ ...prev, [i]: e.target.value }))}
                     maxLength={160}
                     rows={3}
-                    className="w-full bg-[#111827] border border-white/10 text-white text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-amber-500/40 resize-none placeholder:text-[#374151]"
+                    className="w-full bg-[#18181b] border border-white/10 text-white text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-amber-500/40 resize-none placeholder:text-[#52525b]"
                   />
                   <div className="flex items-center justify-between">
                     <span className="text-[#4b5563] text-xs">{smsDrafts[i].length}/160</span>
@@ -1177,7 +1148,7 @@ function TenantAIModal({ tenant, onClose }: { tenant: Tenant; onClose: () => voi
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => e.key === "Enter" && !e.shiftKey && send()}
               placeholder="What did the tenant say? What's your situation?"
-              className="flex-1 bg-[#0d1117] border border-white/10 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-white/20 placeholder:text-[#374151]"
+              className="flex-1 bg-[#0d1117] border border-white/10 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-white/20 placeholder:text-[#52525b]"
             />
             <button
               onClick={() => send()}
@@ -1289,7 +1260,7 @@ function PayOrQuitModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-[#111827] border border-white/10 rounded-2xl w-full max-w-md mx-4 shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+      <div className="bg-[#18181b] border border-[#3f3f46] rounded-2xl w-full max-w-md mx-4 shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="p-6">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -1358,8 +1329,8 @@ function PayOrQuitModal({
                   <p className="text-[#d1d5db] text-xs leading-relaxed">{planSms}</p>
                 </div>
                 <div className="flex justify-between items-center mb-4">
-                  <span className="text-[#2e3a50] text-[10px]">{hasPhone ? tenant.phone : "No phone on file"}</span>
-                  <span className="text-[#2e3a50] text-[10px]">{planSms.length} chars</span>
+                  <span className="text-[#52525b] text-[10px]">{hasPhone ? tenant.phone : "No phone on file"}</span>
+                  <span className="text-[#52525b] text-[10px]">{planSms.length} chars</span>
                 </div>
                 <div className="flex gap-3">
                   <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-[#9ca3af] bg-white/5 hover:bg-white/10 transition-colors">
@@ -1389,7 +1360,7 @@ function PayOrQuitModal({
                   </button>
                 </div>
                 {!hasPhone && <p className="text-orange-400/70 text-[10px] mt-2 text-center">No phone on file — action will be logged only</p>}
-                <p className="text-[#2e3a50] text-[10px] mt-3 text-center">If no response in 5 days, escalate to Pay or Quit or Cash for Keys</p>
+                <p className="text-[#52525b] text-[10px] mt-3 text-center">If no response in 5 days, escalate to Pay or Quit or Cash for Keys</p>
               </div>
             )
           })()}
@@ -1409,8 +1380,8 @@ function PayOrQuitModal({
                 <p className="text-[#d1d5db] text-xs leading-relaxed">{smsBody}</p>
               </div>
               <div className="flex justify-between items-center mb-4">
-                <span className="text-[#2e3a50] text-[10px]">{hasPhone ? tenant.phone : "No phone on file"}</span>
-                <span className="text-[#2e3a50] text-[10px]">{smsBody.length} chars</span>
+                <span className="text-[#52525b] text-[10px]">{hasPhone ? tenant.phone : "No phone on file"}</span>
+                <span className="text-[#52525b] text-[10px]">{smsBody.length} chars</span>
               </div>
               <div className="flex gap-3">
                 <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-[#9ca3af] bg-white/5 hover:bg-white/10 transition-colors">
@@ -1460,7 +1431,7 @@ function PayOrQuitModal({
               onChange={e => setLandlordName(e.target.value)}
               placeholder="e.g. John Smith"
               autoFocus
-              className="w-full bg-[#0d1117] border border-white/10 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-white/20 placeholder:text-[#374151]"
+              className="w-full bg-[#0d1117] border border-white/10 text-white text-sm rounded-xl px-3 py-2.5 focus:outline-none focus:border-white/20 placeholder:text-[#52525b]"
             />
           </div>
 
@@ -1473,7 +1444,7 @@ function PayOrQuitModal({
             <Download size={13} />
             {downloading ? "Generating PDF…" : "Download Pay or Quit PDF"}
           </button>
-          <p className="text-[#2e3a50] text-[10px] mb-5 text-center">Print and serve to tenant per the instructions above</p>
+          <p className="text-[#52525b] text-[10px] mb-5 text-center">Print and serve to tenant per the instructions above</p>
 
           {/* SMS preview */}
           <div className="bg-[#0d1117] border border-white/5 rounded-xl p-3 mb-1">
@@ -1481,8 +1452,8 @@ function PayOrQuitModal({
             <p className="text-[#d1d5db] text-xs leading-relaxed">{smsBody}</p>
           </div>
           <div className="flex justify-between items-center mb-4">
-            <span className="text-[#2e3a50] text-[10px]">{hasPhone ? tenant.phone : "No phone on file"}</span>
-            <span className="text-[#2e3a50] text-[10px]">{smsBody.length} chars</span>
+            <span className="text-[#52525b] text-[10px]">{hasPhone ? tenant.phone : "No phone on file"}</span>
+            <span className="text-[#52525b] text-[10px]">{smsBody.length} chars</span>
           </div>
 
           <div className="flex gap-3">
@@ -1502,7 +1473,7 @@ function PayOrQuitModal({
           {!hasPhone && (
             <p className="text-orange-400/70 text-[10px] mt-2 text-center">No phone number on file — PDF only</p>
           )}
-          <p className="text-[#2e3a50] text-[10px] mt-3 text-center">
+          <p className="text-[#52525b] text-[10px] mt-3 text-center">
             Most tenants pay within 7 days of receiving this notice
           </p>
             </>
@@ -1614,7 +1585,7 @@ function CashForKeysOutcomeModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="bg-[#111827] border border-white/10 rounded-2xl w-full max-w-sm mx-4 shadow-2xl"
+        className="bg-[#18181b] border border-[#3f3f46] rounded-2xl w-full max-w-sm mx-4 shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
         <div className="p-5">
@@ -1665,6 +1636,7 @@ function TenantCard({
   onActionExecuted,
   autoMode,
   escalationRules,
+  layout = "card",
 }: {
   t: Tenant
   properties: { id: string; name: string; address?: string; state?: string }[]
@@ -1676,6 +1648,7 @@ function TenantCard({
   onActionExecuted: () => void
   autoMode: boolean
   escalationRules?: EscalationRules
+  layout?: "card" | "row"
 }) {
   const [loading, setLoading] = useState<string | null>(null)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
@@ -1726,7 +1699,14 @@ function TenantCard({
     ? t.days_past_due - actionThreshold
     : 0
   const showUrgency = daysOverThreshold >= 5
-  const scheduledAction = effectiveStatus === "queued" ? computeScheduledDate(t) : null
+  const pendingScheduledForCard = recentActivity.find(
+    a => a.tenant_id === t.id
+      && (a.type === "scheduled_split_pay_offer" || a.type === "scheduled_sms")
+      && a.status === "pending"
+      && a.snapshot?.scheduled_for
+      && new Date(a.snapshot.scheduled_for) > new Date()
+  )
+  const scheduledAction = effectiveStatus === "queued" ? computeScheduledDate(t, pendingScheduledForCard) : null
 
   // Detect payment plan offer sent 3+ days ago with no response yet
   const pendingPlanOffer = (() => {
@@ -1851,7 +1831,7 @@ function TenantCard({
     return rem > 0 ? `${years}yr ${rem}mo` : `${years} year${years !== 1 ? "s" : ""}`
   })()
 
-  return (
+  const modals = (
     <>
       {intakeOpen && (
         <EscalationIntakeModal
@@ -1923,8 +1903,96 @@ function TenantCard({
           onOutcomeSet={(key) => { setLocalCfkOutcome(key); onActionExecuted() }}
         />
       )}
+    </>
+  )
 
-      <div className={`bg-[#111113] border border-[#27272a] hover:border-[#3f3f46] rounded-xl p-4 transition-all ${statusCfg.opacity}`}>
+  if (layout === "row") {
+    return (
+      <>
+        {modals}
+        <div className={`grid grid-cols-[minmax(0,2fr)_130px_160px_minmax(0,1.5fr)_220px] items-center gap-3 px-5 py-3 border-b border-[#27272a] last:border-b-0 hover:bg-white/[0.02] transition-colors ${statusCfg.opacity}`}>
+          {/* Tenant */}
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`w-8 h-8 rounded-full ${avatarColor(t.name)} flex items-center justify-center text-white text-xs font-bold shrink-0`}>
+              {initials(t.name)}
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="text-white font-semibold text-sm truncate">{t.name}</span>
+                <button onClick={() => setEditing(true)} className="text-[#52525b] hover:text-[#71717a] transition-colors shrink-0">
+                  <Pencil size={10} />
+                </button>
+              </div>
+              <span className="text-[#71717a] text-xs truncate block">
+                {t.properties?.name ? `${t.properties.name} · ` : ""}Unit {t.unit}
+                {!t.phone && <span className="text-[#52525b]"> · No phone</span>}
+              </span>
+            </div>
+          </div>
+          {/* Balance */}
+          <div className="text-right">
+            {hasBalance ? (
+              <>
+                <div className="text-red-400 font-bold tabular-nums text-sm leading-tight">${t.balance_due.toLocaleString()}</div>
+                <div className="text-[#71717a] text-xs tabular-nums">${t.rent_amount?.toLocaleString()}/mo</div>
+              </>
+            ) : (
+              <div className="text-[#a1a1aa] font-semibold tabular-nums text-sm">
+                ${t.rent_amount?.toLocaleString()}<span className="text-[#71717a] font-normal">/mo</span>
+              </div>
+            )}
+          </div>
+          {/* Status */}
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${config.dot}`} />
+              <span className="text-white text-xs font-medium truncate">{config.label}</span>
+            </div>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfkOutcomeCfg ? cfkOutcomeCfg.dot : statusCfg.dot}`} />
+              <span className={`text-xs truncate ${cfkOutcomeCfg ? "text-[#9ca3af]" : statusCfg.textColor}`}>
+                {cfkOutcomeCfg ? cfkOutcomeCfg.badge : statusCfg.label}
+              </span>
+            </div>
+          </div>
+          {/* Next Action */}
+          <div className="text-xs text-[#9ca3af] truncate">{effectiveSystemMsg.primary || "—"}</div>
+          {/* Actions */}
+          <div className="flex items-center gap-1.5 justify-end">
+            {needsIntakeReview && (
+              <button onClick={approveIntakeAutomation} disabled={loading !== null} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-50 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 border border-amber-500/20 transition-colors">
+                <CheckCircle2 size={11} />{loading === "approve_intake" ? "…" : "Approve"}
+              </button>
+            )}
+            {isCfkSent && (
+              <button onClick={() => setCfkOutcomeOpen(true)} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-orange-500/10 border border-orange-500/20 text-orange-400 hover:bg-orange-500/20 transition-colors">
+                <HandCoins size={11} />Update
+              </button>
+            )}
+            {canReviewSend && !isCfkSent && (
+              <button onClick={() => requestAction(t.action_type)} disabled={loading !== null} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-50 bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 border border-blue-500/20 transition-colors">
+                <Send size={11} />{loading ? "…" : "Review"}
+              </button>
+            )}
+            {hasBalance && !isPaused && !isSent && (
+              <button onClick={() => setMarkingPaid(true)} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600/15 text-emerald-400 hover:bg-emerald-600/25 border border-emerald-500/20 transition-colors">
+                <DollarSign size={11} />Paid
+              </button>
+            )}
+            <button onClick={() => setAiOpen(true)} className="h-7 w-7 rounded-lg text-[#a1a1aa] bg-white/[0.05] hover:bg-white/[0.09] border border-[#3f3f46] flex items-center justify-center transition-colors" title="AI Advisor"><Lightbulb size={12} /></button>
+            <button onClick={onTogglePause} className="h-7 w-7 rounded-lg text-[#a1a1aa] bg-white/[0.05] hover:bg-white/[0.09] border border-[#3f3f46] flex items-center justify-center transition-colors" title={isPaused ? "Resume" : "Pause"}>{isPaused ? <Play size={12} /> : <Pause size={12} />}</button>
+            <Link href={`/dashboard/tenants/${t.id}`} className="h-7 w-7 rounded-lg text-[#a1a1aa] bg-white/[0.05] hover:bg-white/[0.09] border border-[#3f3f46] flex items-center justify-center transition-colors" title="Tenant details"><ArrowRight size={12} /></Link>
+          </div>
+        </div>
+      </>
+    )
+  }
+
+  return (
+    <>
+      {modals}
+
+      <div className={`bg-[#18181b] border border-[#3f3f46] hover:border-[#52525b] rounded-xl p-4 transition-all ${statusCfg.opacity}`}>
 
         {/* ── Row 1: Name + financials ─────────────────────────────────────────── */}
         <div className="flex items-start justify-between gap-3 mb-0.5">
@@ -1941,17 +2009,17 @@ function TenantCard({
             </div>
             <div className="flex items-center gap-1.5 mt-0.5">
               <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfkOutcomeCfg ? cfkOutcomeCfg.dot : statusCfg.dot}`} />
-              <span className="text-[#71717a] text-xs truncate">
+              <span className="text-[#a1a1aa] text-xs truncate">
                 {cfkOutcomeCfg
                   ? cfkOutcomeCfg.badge
                   : isCfkSent && !cfkOutcomeCfg
                   ? "Cash for Keys · In Progress"
                   : statusCfg.label}
                 {t.tier !== "healthy" && !cfkOutcomeCfg && (
-                  <span className="text-[#52525b] ml-1">· {config.badge}</span>
+                  <span className="text-[#71717a] ml-1">· {config.badge}</span>
                 )}
               </span>
-              {!t.phone && <span className="text-[10px] text-[#52525b] ml-1">· No phone</span>}
+              {!t.phone && <span className="text-[10px] text-[#71717a] ml-1">· No phone</span>}
             </div>
           </div>
 
@@ -1961,7 +2029,7 @@ function TenantCard({
                 <div className="text-red-400 text-base font-bold tabular-nums leading-tight">
                   ${t.balance_due.toLocaleString()} owed
                 </div>
-                <div className="text-[#52525b] text-xs tabular-nums">${t.rent_amount?.toLocaleString()}/mo</div>
+                <div className="text-[#71717a] text-xs tabular-nums">${t.rent_amount?.toLocaleString()}/mo</div>
               </>
             ) : (
               <div className="text-[#a1a1aa] font-semibold tabular-nums text-sm">
@@ -1972,7 +2040,7 @@ function TenantCard({
         </div>
 
         {/* Unit / property line */}
-        <div className="text-[#52525b] text-xs mb-3">
+        <div className="text-[#71717a] text-xs mb-3">
           {t.properties?.name ? `${t.properties.name} · ` : ""}Unit {t.unit}
         </div>
 
@@ -2005,8 +2073,8 @@ function TenantCard({
 
         {/* Next action line with countdown */}
         {nextActionText && (
-          <div className="flex items-start gap-1.5 mb-3.5 text-xs text-[#71717a]">
-            <ArrowRight size={10} className="shrink-0 text-[#52525b] mt-0.5" />
+          <div className="flex items-start gap-1.5 mb-3.5 text-xs text-[#a1a1aa]">
+            <ArrowRight size={10} className="shrink-0 text-[#71717a] mt-0.5" />
             <span>
               {effectiveSystemMsg.primary}
               {effectiveStatus === "queued" && scheduledAction && (
@@ -2015,7 +2083,7 @@ function TenantCard({
                 </span>
               )}
               {effectiveSystemMsg.reason && (
-                <span className="text-[#52525b] ml-1">· {effectiveSystemMsg.reason}</span>
+                <span className="text-[#71717a] ml-1">· {effectiveSystemMsg.reason}</span>
               )}
             </span>
           </div>
@@ -2023,7 +2091,7 @@ function TenantCard({
 
         {/* CFK outcome next step */}
         {cfkOutcomeCfg && (
-          <div className="text-xs text-[#71717a] mb-3.5 pl-4">{cfkOutcomeCfg.nextStep}</div>
+          <div className="text-xs text-[#9ca3af] mb-3.5 pl-4">{cfkOutcomeCfg.nextStep}</div>
         )}
 
         {/* High-urgency unactioned warning */}
@@ -2082,7 +2150,7 @@ function TenantCard({
 
           <button
             onClick={() => setAiOpen(true)}
-            className="h-8 w-8 rounded-lg text-[#71717a] bg-white/[0.03] hover:bg-white/[0.06] border border-[#27272a] hover:border-[#3f3f46] transition-colors flex items-center justify-center shrink-0"
+            className="h-8 w-8 rounded-lg text-[#a1a1aa] bg-white/[0.05] hover:bg-white/[0.09] border border-[#3f3f46] hover:border-[#52525b] transition-colors flex items-center justify-center shrink-0"
             title="Ask AI about this tenant"
           >
             <Lightbulb size={13} />
@@ -2090,7 +2158,7 @@ function TenantCard({
 
           <button
             onClick={onTogglePause}
-            className="h-8 w-8 rounded-lg text-[#71717a] bg-white/[0.03] hover:bg-white/[0.06] border border-[#27272a] hover:border-[#3f3f46] transition-colors flex items-center justify-center shrink-0"
+            className="h-8 w-8 rounded-lg text-[#a1a1aa] bg-white/[0.05] hover:bg-white/[0.09] border border-[#3f3f46] hover:border-[#52525b] transition-colors flex items-center justify-center shrink-0"
             title={isPaused ? "Resume automation" : "Pause automation"}
           >
             {isPaused ? <Play size={13} /> : <Pause size={13} />}
@@ -2098,7 +2166,7 @@ function TenantCard({
 
           <Link
             href={`/dashboard/tenants/${t.id}`}
-            className="h-8 w-8 rounded-lg text-[#71717a] bg-white/[0.03] hover:bg-white/[0.06] border border-[#27272a] hover:border-[#3f3f46] transition-colors flex items-center justify-center shrink-0"
+            className="h-8 w-8 rounded-lg text-[#a1a1aa] bg-white/[0.05] hover:bg-white/[0.09] border border-[#3f3f46] hover:border-[#52525b] transition-colors flex items-center justify-center shrink-0"
             title="Tenant details"
           >
             <ArrowRight size={13} />
@@ -2171,7 +2239,7 @@ function HandleAllReviewModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onCancel}>
       <div
-        className="bg-[#111827] border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[85vh]"
+        className="bg-[#18181b] border border-[#3f3f46] rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[85vh]"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-start justify-between p-6 border-b border-white/5 shrink-0">
@@ -2199,7 +2267,7 @@ function HandleAllReviewModal({
               {allChecked ? "Deselect all" : `Select all (${tenants.length})`}
             </span>
           </label>
-          <span className="text-[#374151] text-xs">{checked.size} of {tenants.length} selected</span>
+          <span className="text-[#52525b] text-xs">{checked.size} of {tenants.length} selected</span>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0">
@@ -2210,8 +2278,8 @@ function HandleAllReviewModal({
                 key={t.id}
                 className={`flex gap-3 p-4 rounded-xl border cursor-pointer transition-colors ${
                   isChecked
-                    ? "bg-[#0d1628] border-blue-500/20"
-                    : "bg-[#0d1117] border-white/5 opacity-50"
+                    ? "bg-blue-500/[0.08] border-blue-500/25"
+                    : "bg-white/[0.03] border-[#27272a] opacity-50"
                 }`}
               >
                 <input
@@ -2251,7 +2319,7 @@ function HandleAllReviewModal({
                       ))}
                     </div>
                   )}
-                  <div className="text-[#374151] text-xs flex items-center gap-1.5">
+                  <div className="text-[#52525b] text-xs flex items-center gap-1.5">
                     <ArrowRight size={10} />
                     System will execute: <span className="text-[#4b5563]">{config.badge}</span>
                     {t.email && <span>· to {t.email}</span>}
@@ -2269,7 +2337,7 @@ function HandleAllReviewModal({
         </div>
 
         <div className="p-6 border-t border-white/5 shrink-0">
-          <p className="text-[#2e3a50] text-xs mb-4">
+          <p className="text-[#52525b] text-xs mb-4">
             Risk snapshot will be saved to each tenant&apos;s history at the moment of execution — permanently viewable on their detail page.
           </p>
           <div className="flex gap-3">
@@ -2302,7 +2370,7 @@ function SubGroupHeader({ status, count }: { status: AutoStatus; count: number }
     <div className="flex items-center gap-2 mb-3 mt-5 first:mt-0">
       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot.replace(" animate-pulse", "")}`} />
       <span className={`text-xs font-medium ${cfg.textColor}`}>{cfg.label}</span>
-      <span className="text-[#2e3a50] text-xs">({count})</span>
+      <span className="text-[#52525b] text-xs">({count})</span>
       <div className="flex-1 h-px bg-white/5" />
     </div>
   )
@@ -2410,10 +2478,10 @@ function Section({
           <div className="flex items-center gap-2.5">
             <span className={`w-2.5 h-2.5 rounded-full ${config.dot} shrink-0`} />
             <h2 className="text-white font-semibold text-base">{config.sectionHeader}</h2>
-            <span className="text-[#4b5563] text-sm font-normal">({tenants.length})</span>
+            <span className="text-[#71717a] text-sm font-normal">({tenants.length})</span>
           </div>
           {summaryText && (
-            <p className="text-[#374151] text-xs mt-1 ml-5 leading-relaxed">{summaryText}</p>
+            <p className="text-[#71717a] text-xs mt-1 ml-5 leading-relaxed">{summaryText}</p>
           )}
         </div>
 
@@ -2428,58 +2496,61 @@ function Section({
           )}
           <Link
             href={`/dashboard/tenants/${tenants[0]?.id}`}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-[#6b7280] bg-white/5 hover:bg-white/10 border border-white/5 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-[#71717a] bg-white/[0.05] hover:bg-white/10 border border-[#3f3f46] transition-colors"
           >
             Review First <ArrowRight size={11} />
           </Link>
         </div>
       </div>
 
-      {/* Tenant grid — with optional sub-groups */}
-      {showSubGroups && hasMultipleStatuses ? (
-        <div>
-          {statusGroups.map(group => (
+      {/* Mobile: cards */}
+      <div className="lg:hidden space-y-3">
+        {showSubGroups && hasMultipleStatuses ? (
+          statusGroups.map(group => (
             <div key={group.status}>
               <SubGroupHeader status={group.status} count={group.items.length} />
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-2">
+              <div className="space-y-3 mb-2">
                 {group.items.map(({ t, autoStatus, systemMsg }) => (
-                  <TenantCard
-                    key={t.id}
-                    t={t}
-                    properties={properties}
-                    autoStatus={autoStatus}
-                    systemMsg={systemMsg}
-                    recentActivity={recentActivity}
-                    onTogglePause={() => onTogglePause(t.id)}
-                    onPaymentRecorded={onPaymentRecorded}
-                    onActionExecuted={onActionExecuted}
-                    autoMode={autoMode}
-                    escalationRules={escalationRules}
-                  />
+                  <TenantCard key={t.id} t={t} properties={properties} autoStatus={autoStatus} systemMsg={systemMsg} recentActivity={recentActivity} onTogglePause={() => onTogglePause(t.id)} onPaymentRecorded={onPaymentRecorded} onActionExecuted={onActionExecuted} autoMode={autoMode} escalationRules={escalationRules} />
                 ))}
               </div>
             </div>
-          ))}
+          ))
+        ) : (
+          withStatus.map(({ t, autoStatus, systemMsg }) => (
+            <TenantCard key={t.id} t={t} properties={properties} autoStatus={autoStatus} systemMsg={systemMsg} recentActivity={recentActivity} onTogglePause={() => onTogglePause(t.id)} onPaymentRecorded={onPaymentRecorded} onActionExecuted={onActionExecuted} autoMode={autoMode} escalationRules={escalationRules} />
+          ))
+        )}
+      </div>
+
+      {/* Desktop: table-style rows */}
+      <div className="hidden lg:block bg-[#18181b] border border-[#3f3f46] rounded-xl overflow-hidden">
+        <div className="grid grid-cols-[minmax(0,2fr)_130px_160px_minmax(0,1.5fr)_220px] gap-3 px-5 py-2.5 border-b border-[#27272a]">
+          <span className="text-[#71717a] text-xs uppercase tracking-wide font-medium">Tenant</span>
+          <span className="text-[#71717a] text-xs uppercase tracking-wide font-medium text-right">Balance</span>
+          <span className="text-[#71717a] text-xs uppercase tracking-wide font-medium">Status</span>
+          <span className="text-[#71717a] text-xs uppercase tracking-wide font-medium">Next Action</span>
+          <span />
         </div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {withStatus.map(({ t, autoStatus, systemMsg }) => (
-            <TenantCard
-              key={t.id}
-              t={t}
-              properties={properties}
-              autoStatus={autoStatus}
-              systemMsg={systemMsg}
-              recentActivity={recentActivity}
-              onTogglePause={() => onTogglePause(t.id)}
-              onPaymentRecorded={onPaymentRecorded}
-              onActionExecuted={onActionExecuted}
-              autoMode={autoMode}
-              escalationRules={escalationRules}
-            />
-          ))}
-        </div>
-      )}
+        {showSubGroups && hasMultipleStatuses ? (
+          statusGroups.map(group => (
+            <div key={group.status}>
+              <div className="flex items-center gap-2 px-5 py-1.5 bg-white/[0.015] border-b border-[#27272a]">
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${AUTO_STATUS_CONFIG[group.status].dot.replace(" animate-pulse", "")}`} />
+                <span className={`text-xs font-medium ${AUTO_STATUS_CONFIG[group.status].textColor}`}>{AUTO_STATUS_CONFIG[group.status].label}</span>
+                <span className="text-[#52525b] text-xs">({group.items.length})</span>
+              </div>
+              {group.items.map(({ t, autoStatus, systemMsg }) => (
+                <TenantCard key={t.id} layout="row" t={t} properties={properties} autoStatus={autoStatus} systemMsg={systemMsg} recentActivity={recentActivity} onTogglePause={() => onTogglePause(t.id)} onPaymentRecorded={onPaymentRecorded} onActionExecuted={onActionExecuted} autoMode={autoMode} escalationRules={escalationRules} />
+              ))}
+            </div>
+          ))
+        ) : (
+          withStatus.map(({ t, autoStatus, systemMsg }) => (
+            <TenantCard key={t.id} layout="row" t={t} properties={properties} autoStatus={autoStatus} systemMsg={systemMsg} recentActivity={recentActivity} onTogglePause={() => onTogglePause(t.id)} onPaymentRecorded={onPaymentRecorded} onActionExecuted={onActionExecuted} autoMode={autoMode} escalationRules={escalationRules} />
+          ))
+        )}
+      </div>
     </div>
   )
 }
@@ -2599,9 +2670,9 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
       )}
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
+      <div className="flex items-start justify-between mb-5 gap-3 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold text-white">Tenants</h1>
+          <h1 className="text-xl lg:text-2xl font-bold text-white">Tenants</h1>
           <p className="text-[#6b7280] text-sm mt-0.5">
             {filtered.length} active ·{" "}
             {counts.needs_review > 0 && <span className="text-red-400">{counts.needs_review} need review · </span>}
@@ -2611,14 +2682,14 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#4b5563]" />
+        <div className="flex items-center gap-2 flex-wrap w-full lg:w-auto">
+          <div className="relative flex-1 lg:hidden">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#71717a]" />
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search tenants…"
-              className="bg-[#111827] border border-white/10 text-white text-sm rounded-xl pl-9 pr-8 py-2 w-52 placeholder:text-[#4b5563] focus:outline-none focus:border-white/20"
+              className="bg-[#18181b] border border-[#3f3f46] text-white text-sm rounded-xl pl-9 pr-8 py-2 w-full placeholder:text-[#52525b] focus:outline-none focus:border-[#52525b]"
             />
             {search && (
               <button onClick={() => setSearch("")} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#4b5563] hover:text-white">
@@ -2630,219 +2701,289 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
           <select
             value={sortBy}
             onChange={e => setSortBy(e.target.value as typeof sortBy)}
-            className="bg-[#111827] border border-white/10 text-white text-sm rounded-xl px-3 py-2 focus:outline-none focus:border-white/20"
+            className="lg:hidden bg-[#18181b] border border-[#3f3f46] text-white text-sm rounded-xl px-3 py-2 focus:outline-none focus:border-[#52525b]"
           >
-            <option value="tier">Sort: Risk tier</option>
-            <option value="balance">Sort: Balance ↓</option>
-            <option value="name">Sort: Name A–Z</option>
+            <option value="tier">Risk tier</option>
+            <option value="balance">Balance ↓</option>
+            <option value="name">Name A–Z</option>
           </select>
 
           {properties.length > 1 && (
             <select
               value={propertyFilter}
               onChange={e => setPropertyFilter(e.target.value)}
-              className="bg-[#111827] border border-white/10 text-white text-sm rounded-xl px-3 py-2 focus:outline-none focus:border-white/20"
+              className="lg:hidden bg-[#18181b] border border-[#3f3f46] text-white text-sm rounded-xl px-3 py-2 focus:outline-none focus:border-[#52525b]"
             >
-              <option value="">All Properties</option>
+              <option value="">All properties</option>
               {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           )}
 
           <button
             onClick={() => setAddingTenant(true)}
-            className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-semibold px-4 py-2 rounded-xl text-sm transition-colors"
+            className="flex items-center gap-1.5 bg-white/[0.06] hover:bg-white/[0.10] border border-[#3f3f46] text-white font-semibold px-3 py-2 rounded-xl text-sm transition-colors"
           >
-            <Plus size={14} /> Add Tenant
+            <Plus size={14} /> <span className="hidden sm:inline">Add Tenant</span><span className="sm:hidden">Add</span>
           </button>
 
           <Link
             href="/dashboard/upload"
-            className="flex items-center gap-2 bg-[#60a5fa] hover:bg-[#3b82f6] text-black font-semibold px-4 py-2 rounded-xl text-sm transition-colors"
+            className="flex items-center gap-1.5 bg-[#60a5fa] hover:bg-[#3b82f6] text-black font-semibold px-3 py-2 rounded-xl text-sm transition-colors"
           >
-            <Upload size={14} /> Upload Rent Roll
+            <Upload size={14} /> <span className="hidden sm:inline">Upload Rent Roll</span><span className="sm:hidden">Import</span>
           </Link>
         </div>
       </div>
 
-      {/* Portfolio summary strip */}
-      <PortfolioSummaryStrip stats={portfolioStats} />
+      {/* Two-column layout: left filter panel on desktop, stacked on mobile */}
+      <div className="lg:flex lg:gap-6 lg:items-start">
 
-      {/* Filter bar */}
-      <div className="mb-4">
-        <FilterBar active={activeFilter} counts={counts} onChange={f => { setActiveFilter(f); setTierFilter("") }} />
-      </div>
+        {/* Desktop left filter panel */}
+        <div className="hidden lg:flex lg:flex-col lg:w-44 lg:shrink-0 gap-0.5 pt-0.5">
+          {FILTER_TABS.map(tab => {
+            const count = counts[tab.key]
+            const isActive = activeFilter === tab.key
+            return (
+              <button
+                key={tab.key}
+                onClick={() => { setActiveFilter(tab.key); setTierFilter("") }}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  isActive
+                    ? "bg-[#27272a] text-white"
+                    : "text-[#71717a] hover:text-[#a1a1aa] hover:bg-white/[0.04]"
+                }`}
+              >
+                <span>{tab.label}</span>
+                {count > 0 && (
+                  <span className={`text-xs tabular-nums font-medium ${isActive ? "text-white/60" : "text-[#52525b]"}`}>
+                    {count}
+                  </span>
+                )}
+              </button>
+            )
+          })}
 
-      {/* Tier chips — quick-filter to a single tier */}
-      {activeFilter === "all" && (
-        <div className="flex items-center gap-2 mb-6 flex-wrap">
-          {(["legal","pay_or_quit","cash_for_keys","payment_plan","reminder","watch"] as RiskTier[])
-            .filter(tier => filtered.some(t => t.tier === tier))
-            .map(tier => {
-              const cfg = TIER_CONFIG[tier]
-              const active = tierFilter === tier
-              return (
-                <button
-                  key={tier}
-                  onClick={() => setTierFilter(active ? "" : tier)}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${
-                    active
-                      ? `${cfg.badgeStyle || "bg-white/10 border-white/20"} ${cfg.textColor}`
-                      : "border-white/5 text-[#4b5563] hover:text-[#9ca3af] hover:border-white/10"
-                  }`}
-                >
-                  <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
-                  {cfg.label}
-                  <span className="tabular-nums opacity-60">{filtered.filter(t => t.tier === tier).length}</span>
-                </button>
-              )
-            })}
-          {tierFilter && (
-            <button
-              onClick={() => setTierFilter("")}
-              className="flex items-center gap-1 text-xs text-[#4b5563] hover:text-white transition-colors"
+          <div className="h-px bg-[#27272a] my-2.5" />
+
+          <div className="relative">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#71717a]" />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search…"
+              className="bg-[#18181b] border border-[#3f3f46] text-white text-sm rounded-lg pl-8 pr-6 py-1.5 w-full placeholder:text-[#52525b] focus:outline-none focus:border-[#52525b]"
+            />
+            {search && (
+              <button onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-[#52525b] hover:text-white">
+                <X size={11} />
+              </button>
+            )}
+          </div>
+
+          <select
+            value={sortBy}
+            onChange={e => setSortBy(e.target.value as typeof sortBy)}
+            className="bg-[#18181b] border border-[#3f3f46] text-[#a1a1aa] text-sm rounded-lg px-2.5 py-1.5 w-full focus:outline-none focus:border-[#52525b] mt-1"
+          >
+            <option value="tier">By risk tier</option>
+            <option value="balance">By balance</option>
+            <option value="name">By name A–Z</option>
+          </select>
+
+          {properties.length > 1 && (
+            <select
+              value={propertyFilter}
+              onChange={e => setPropertyFilter(e.target.value)}
+              className="bg-[#18181b] border border-[#3f3f46] text-[#a1a1aa] text-sm rounded-lg px-2.5 py-1.5 w-full focus:outline-none focus:border-[#52525b] mt-1"
             >
-              <X size={11} /> Clear
-            </button>
+              <option value="">All properties</option>
+              {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
           )}
         </div>
-      )}
 
-      {/* Empty state — no tenants at all */}
-      {filtered.length === 0 && (
-        <div className="bg-[#111827] border border-white/10 rounded-2xl p-16 text-center">
-          {tenants.length === 0 ? (
-            <>
-              <p className="text-white font-semibold mb-1">No tenants yet</p>
-              <p className="text-[#6b7280] text-sm mb-4">Upload a rent roll and let automation take over.</p>
-              <Link href="/dashboard/upload" className="text-[#60a5fa] hover:underline text-sm">Upload Rent Roll →</Link>
-            </>
-          ) : (
-            <p className="text-[#6b7280]">No tenants match your search.</p>
-          )}
-        </div>
-      )}
+        {/* Main content */}
+        <div className="flex-1 min-w-0">
 
-      {/* Empty state — filter has no results */}
-      {filtered.length > 0 && activeSections.length === 0 && activeFilter !== "all" && (
-        <div className="bg-[#111827] border border-white/10 rounded-2xl p-10 text-center">
-          {activeFilter === "needs_review" ? (
-            <>
-              <div className="w-9 h-9 rounded-full bg-emerald-500/10 flex items-center justify-center mx-auto mb-3">
-                <CheckCircle2 size={17} className="text-emerald-400" />
-              </div>
-              <p className="text-white font-semibold mb-1">Nothing needs review right now</p>
-            </>
-          ) : (
-            <div className="w-9 h-9 rounded-full bg-white/5 flex items-center justify-center mx-auto mb-3">
-              <TrendingUp size={17} className="text-[#4b5563]" />
+          {/* Mobile filter bar */}
+          <div className="lg:hidden mb-4">
+            <FilterBar active={activeFilter} counts={counts} onChange={f => { setActiveFilter(f); setTierFilter("") }} />
+          </div>
+
+          {/* Portfolio summary strip */}
+          <PortfolioSummaryStrip stats={portfolioStats} />
+
+          {/* Tier chips — quick-filter to a single tier */}
+          {activeFilter === "all" && (
+            <div className="flex items-center gap-2 mb-6 flex-wrap">
+              {(["legal","pay_or_quit","cash_for_keys","payment_plan","reminder","watch"] as RiskTier[])
+                .filter(tier => filtered.some(t => t.tier === tier))
+                .map(tier => {
+                  const cfg = TIER_CONFIG[tier]
+                  const active = tierFilter === tier
+                  return (
+                    <button
+                      key={tier}
+                      onClick={() => setTierFilter(active ? "" : tier)}
+                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${
+                        active
+                          ? `${cfg.badgeStyle || "bg-white/10 border-white/20"} ${cfg.textColor}`
+                          : "border-[#27272a] text-[#71717a] hover:text-[#a1a1aa] hover:border-[#3f3f46]"
+                      }`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+                      {cfg.label}
+                      <span className="tabular-nums opacity-60">{filtered.filter(t => t.tier === tier).length}</span>
+                    </button>
+                  )
+                })}
+              {tierFilter && (
+                <button
+                  onClick={() => setTierFilter("")}
+                  className="flex items-center gap-1 text-xs text-[#52525b] hover:text-white transition-colors"
+                >
+                  <X size={11} /> Clear
+                </button>
+              )}
             </div>
           )}
-          {activeFilter !== "needs_review" && (
-            <p className="text-white font-semibold mb-1">No tenants in this category</p>
+
+          {/* Empty state — no tenants at all */}
+          {filtered.length === 0 && (
+            <div className="bg-[#18181b] border border-[#3f3f46] rounded-2xl p-16 text-center">
+              {tenants.length === 0 ? (
+                <>
+                  <p className="text-white font-semibold mb-1">No tenants yet</p>
+                  <p className="text-[#6b7280] text-sm mb-4">Upload a rent roll and let automation take over.</p>
+                  <Link href="/dashboard/upload" className="text-[#60a5fa] hover:underline text-sm">Upload Rent Roll →</Link>
+                </>
+              ) : (
+                <p className="text-[#6b7280]">No tenants match your search.</p>
+              )}
+            </div>
           )}
-          <p className="text-[#6b7280] text-sm">{FILTER_EMPTY[activeFilter]}</p>
-          <button
-            onClick={() => setActiveFilter("all")}
-            className="mt-4 text-[#60a5fa] hover:underline text-sm"
-          >
-            View all active tenants →
-          </button>
-        </div>
-      )}
 
-      {/* Active sections */}
-      {activeSections.map(tier => (
-        <Section
-          key={tier}
-          tier={tier}
-          tenants={byTier(tier)}
-          properties={properties}
-          recentActivity={recentActivity}
-          pausedTenants={pausedTenants}
-          onTogglePause={togglePause}
-          showSubGroups={activeFilter === "all"}
-          onPaymentRecorded={handlePaymentRecorded}
-          onActionExecuted={handleActionExecuted}
-          autoMode={autoMode}
-          escalationRules={escalationRules}
-        />
-      ))}
-
-      {/* Healthy summary row — shown at bottom of non-healthy views */}
-      {healthy.length > 0 && (activeFilter === "all" || activeFilter === "sent" || activeFilter === "paused") && (
-        <div className="flex items-center justify-between mt-2 px-1 py-4 border-t border-white/5">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-            <span className="text-[#4b5563] text-sm">
-              {healthy.length} tenant{healthy.length !== 1 ? "s" : ""} on track — no action required
-            </span>
-          </div>
-          <button
-            onClick={() => setActiveFilter("healthy")}
-            className="text-xs text-[#4b5563] hover:text-white transition-colors"
-          >
-            View all →
-          </button>
-        </div>
-      )}
-
-      {/* All healthy — full portfolio clean */}
-      {activeSections.length === 0 && healthy.length > 0 && activeFilter === "all" && (
-        <div className="bg-[#111827] border border-white/10 rounded-2xl p-10 text-center">
-          <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center mx-auto mb-3">
-            <ShieldAlert size={18} className="text-emerald-400" />
-          </div>
-          <p className="text-white font-semibold mb-1">System is running — all {healthy.length} tenants on track</p>
-          <p className="text-[#6b7280] text-sm">No action required. Automation will alert you if anything changes.</p>
-        </div>
-      )}
-
-      {/* Healthy tab — full list */}
-      {activeFilter === "healthy" && (
-        <div className="bg-[#111827] border border-white/10 rounded-2xl overflow-hidden">
-          {visibleTenants.length === 0 ? (
-            <div className="p-10 text-center text-[#4b5563] text-sm">No healthy tenants match your filters.</div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-[#4b5563] text-xs uppercase tracking-wide border-b border-white/5">
-                  <th className="px-5 py-3 text-left">Tenant</th>
-                  <th className="px-5 py-3 text-left">Unit</th>
-                  <th className="px-5 py-3 text-left">Property</th>
-                  <th className="px-5 py-3 text-left">Rent</th>
-                  <th className="px-5 py-3 text-left">Last Payment</th>
-                  <th className="px-5 py-3 text-left"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleTenants.map((t, i) => (
-                  <tr key={t.id} className={`border-t border-white/5 hover:bg-white/[0.02] transition-colors ${i === 0 ? "border-t-0" : ""}`}>
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-7 h-7 rounded-full ${avatarColor(t.name)} flex items-center justify-center text-white text-xs font-bold shrink-0`}>
-                          {initials(t.name)}
-                        </div>
-                        <span className="text-white font-medium">{t.name}</span>
-                      </div>
-                    </td>
-                    <td className="px-5 py-3 text-[#6b7280] font-mono text-xs">{t.unit}</td>
-                    <td className="px-5 py-3 text-[#6b7280] text-xs">{t.properties?.name ?? "—"}</td>
-                    <td className="px-5 py-3 text-white tabular-nums">${(t.rent_amount ?? 0).toLocaleString()}</td>
-                    <td className="px-5 py-3 text-[#4b5563] text-xs">
-                      {t.last_payment_date ? new Date(t.last_payment_date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"}
-                    </td>
-                    <td className="px-5 py-3 text-right">
-                      <Link href={`/dashboard/tenants/${t.id}`} className="text-[#4b5563] hover:text-white text-xs transition-colors">
-                        View →
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {/* Empty state — filter has no results */}
+          {filtered.length > 0 && activeSections.length === 0 && activeFilter !== "all" && (
+            <div className="bg-[#18181b] border border-[#3f3f46] rounded-2xl p-10 text-center">
+              {activeFilter === "needs_review" ? (
+                <>
+                  <div className="w-9 h-9 rounded-full bg-emerald-500/10 flex items-center justify-center mx-auto mb-3">
+                    <CheckCircle2 size={17} className="text-emerald-400" />
+                  </div>
+                  <p className="text-white font-semibold mb-1">Nothing needs review right now</p>
+                </>
+              ) : (
+                <div className="w-9 h-9 rounded-full bg-white/5 flex items-center justify-center mx-auto mb-3">
+                  <TrendingUp size={17} className="text-[#4b5563]" />
+                </div>
+              )}
+              {activeFilter !== "needs_review" && (
+                <p className="text-white font-semibold mb-1">No tenants in this category</p>
+              )}
+              <p className="text-[#6b7280] text-sm">{FILTER_EMPTY[activeFilter]}</p>
+              <button
+                onClick={() => setActiveFilter("all")}
+                className="mt-4 text-[#60a5fa] hover:underline text-sm"
+              >
+                View all active tenants →
+              </button>
+            </div>
           )}
+
+          {/* Active sections */}
+          {activeSections.map(tier => (
+            <Section
+              key={tier}
+              tier={tier}
+              tenants={byTier(tier)}
+              properties={properties}
+              recentActivity={recentActivity}
+              pausedTenants={pausedTenants}
+              onTogglePause={togglePause}
+              showSubGroups={activeFilter === "all"}
+              onPaymentRecorded={handlePaymentRecorded}
+              onActionExecuted={handleActionExecuted}
+              autoMode={autoMode}
+              escalationRules={escalationRules}
+            />
+          ))}
+
+          {/* Healthy summary row */}
+          {healthy.length > 0 && (activeFilter === "all" || activeFilter === "sent" || activeFilter === "paused") && (
+            <div className="flex items-center justify-between mt-2 px-1 py-4 border-t border-[#27272a]">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                <span className="text-[#71717a] text-sm">
+                  {healthy.length} tenant{healthy.length !== 1 ? "s" : ""} on track — no action required
+                </span>
+              </div>
+              <button onClick={() => setActiveFilter("healthy")} className="text-xs text-[#52525b] hover:text-white transition-colors">
+                View all →
+              </button>
+            </div>
+          )}
+
+          {/* All healthy — full portfolio clean */}
+          {activeSections.length === 0 && healthy.length > 0 && activeFilter === "all" && (
+            <div className="bg-[#18181b] border border-[#3f3f46] rounded-2xl p-10 text-center">
+              <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center mx-auto mb-3">
+                <ShieldAlert size={18} className="text-emerald-400" />
+              </div>
+              <p className="text-white font-semibold mb-1">System is running — all {healthy.length} tenants on track</p>
+              <p className="text-[#6b7280] text-sm">No action required. Automation will alert you if anything changes.</p>
+            </div>
+          )}
+
+          {/* Healthy tab — full list */}
+          {activeFilter === "healthy" && (
+            <div className="bg-[#18181b] border border-[#3f3f46] rounded-2xl overflow-hidden">
+              {visibleTenants.length === 0 ? (
+                <div className="p-10 text-center text-[#71717a] text-sm">No healthy tenants match your filters.</div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-[#71717a] text-xs uppercase tracking-wide border-b border-[#27272a]">
+                      <th className="px-5 py-3 text-left">Tenant</th>
+                      <th className="px-5 py-3 text-left">Unit</th>
+                      <th className="px-5 py-3 text-left">Property</th>
+                      <th className="px-5 py-3 text-left">Rent</th>
+                      <th className="px-5 py-3 text-left">Last Payment</th>
+                      <th className="px-5 py-3 text-left"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleTenants.map((t, i) => (
+                      <tr key={t.id} className={`border-t border-[#27272a] hover:bg-white/[0.04] transition-colors ${i === 0 ? "border-t-0" : ""}`}>
+                        <td className="px-5 py-3">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-7 h-7 rounded-full ${avatarColor(t.name)} flex items-center justify-center text-white text-xs font-bold shrink-0`}>
+                              {initials(t.name)}
+                            </div>
+                            <span className="text-white font-medium">{t.name}</span>
+                          </div>
+                        </td>
+                        <td className="px-5 py-3 text-[#9ca3af] font-mono text-xs">{t.unit}</td>
+                        <td className="px-5 py-3 text-[#9ca3af] text-xs">{t.properties?.name ?? "—"}</td>
+                        <td className="px-5 py-3 text-white tabular-nums">${(t.rent_amount ?? 0).toLocaleString()}</td>
+                        <td className="px-5 py-3 text-[#71717a] text-xs">
+                          {t.last_payment_date ? new Date(t.last_payment_date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"}
+                        </td>
+                        <td className="px-5 py-3 text-right">
+                          <Link href={`/dashboard/tenants/${t.id}`} className="text-[#71717a] hover:text-white text-xs transition-colors">
+                            View →
+                          </Link>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+
         </div>
-      )}
+      </div>
     </div>
   )
 }

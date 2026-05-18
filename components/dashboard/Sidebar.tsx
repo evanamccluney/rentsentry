@@ -49,7 +49,7 @@ export default function Sidebar() {
     href === "/dashboard" ? pathname === href : pathname.startsWith(href)
 
   return (
-    <aside className="w-56 flex flex-col shrink-0 bg-[#09090b] border-r border-[#27272a]">
+    <aside className="hidden lg:flex w-56 flex-col shrink-0 bg-[#09090b] border-r border-[#27272a]">
       {/* Logo */}
       <div className="px-5 py-5 border-b border-[#27272a]">
         <span className="font-heading text-white font-bold text-base tracking-tight">RentSentry</span>

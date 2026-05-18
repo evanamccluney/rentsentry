@@ -158,6 +158,46 @@ export async function GET(req: NextRequest) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
+  // ── Fire AI-scheduled SMS messages ───────────────────────────────────────────
+  const { data: scheduledMessages } = await supabase
+    .from("interventions")
+    .select("id, tenant_id, user_id, snapshot")
+    .eq("type", "scheduled_sms")
+    .eq("status", "pending")
+    .lte("snapshot->>scheduled_for", now.toISOString())
+
+  if (scheduledMessages && scheduledMessages.length > 0) {
+    for (const item of scheduledMessages) {
+      const snap = item.snapshot as { scheduled_for: string; message?: string | null }
+      const { data: tenant } = await supabase
+        .from("tenants")
+        .select("name, phone, balance_due, sms_opted_out")
+        .eq("id", item.tenant_id)
+        .single()
+
+      let fired = false
+      if (tenant && !tenant.sms_opted_out && tenant.phone) {
+        const phone = normalizePhone(tenant.phone)
+        if (phone) {
+          const firstName = (tenant.name as string).split(" ")[0]
+          const smsBody = snap.message?.trim()
+            || (tenant.balance_due > 0
+              ? `Hi ${firstName}, you have an outstanding balance of $${Number(tenant.balance_due).toLocaleString()}. Reply to this message to arrange payment. Reply STOP to opt out.`
+              : `Hi ${firstName}, just a reminder — your rent payment is coming up. Reply to this message with any questions. Reply STOP to opt out.`)
+          try {
+            await twilioClient.messages.create({ from: process.env.TWILIO_PHONE_NUMBER!, to: phone, body: smsBody })
+            fired = true
+          } catch (e) { console.error("cron: scheduled_sms send failed:", e) }
+        }
+      }
+
+      await supabase
+        .from("interventions")
+        .update({ status: fired ? "sent" : "failed" })
+        .eq("id", item.id)
+    }
+  }
+
   const { data: tenants, error } = await supabase
     .from("tenants")
     .select(`
@@ -167,6 +207,7 @@ export async function GET(req: NextRequest) {
       days_late_avg, late_payment_count,
       previous_delinquency, last_payment_date, delinquency_start_date,
       intake_status, intake_action, auto_contact_approved,
+      snoozed_until, created_at,
       sms_opted_out,
       properties(name)
     `)
@@ -325,6 +366,22 @@ export async function GET(req: NextRequest) {
     const hasBalance = (t.balance_due ?? 0) > 0
     const pmConfirmPending = awaitingPmConfirm.has(t.id)
     let triggered = false
+
+    // Skip snoozed tenants (AI or PM postponed outreach)
+    if (t.snoozed_until && new Date(t.snoozed_until) > now) {
+      results.skipped_dedup++
+      continue
+    }
+
+    // 24-hour hold for newly auto-approved tenants — gives PM time to cancel after heads-up SMS
+    const isNewAutoApproved = t.intake_action === "manual_review"
+      && t.auto_contact_approved === true
+      && t.created_at
+      && (now.getTime() - new Date(t.created_at).getTime()) < 24 * 60 * 60 * 1000
+    if (hasBalance && isNewAutoApproved) {
+      results.skipped_dedup++
+      continue
+    }
 
     const manualIntakeHold = t.intake_action === "manual_review" || t.intake_action === "no_contact"
     if (hasBalance && manualIntakeHold && t.auto_contact_approved === false) {

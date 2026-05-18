@@ -28,34 +28,12 @@ export interface TenantRow {
   previous_delinquency: boolean
   stripe_customer_id: string | null
   autopay_monthly: boolean
-  rent_reporting_opted_in: boolean
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function handleTenantReply(supabase: any, tenant: TenantRow, messageBody: string): Promise<NextResponse> {
   const now = new Date()
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
-
-  // REPORT — tenant opts into credit reporting after receiving a payment offer
-  if (messageBody.trim().toUpperCase() === "REPORT") {
-    if (!tenant.rent_reporting_opted_in) {
-      await supabase.from("tenants").update({ rent_reporting_opted_in: true }).eq("id", tenant.id)
-      await supabase.from("interventions").insert({
-        tenant_id: tenant.id,
-        user_id: tenant.user_id,
-        type: "rent_reporting_opted_in",
-        status: "sent",
-        sent_at: now.toISOString(),
-        notes: "Tenant opted into credit reporting via SMS reply",
-      })
-      await supabase.from("interventions")
-        .update({ status: "resolved" })
-        .eq("tenant_id", tenant.id)
-        .eq("type", "rent_reporting_offer_sent")
-        .eq("status", "pending")
-    }
-    return twiml("Done! Your on-time rent payments will be reported to Experian and Equifax to help build your credit history.")
-  }
 
   const { data: priorReplies } = await supabase
     .from("interventions")

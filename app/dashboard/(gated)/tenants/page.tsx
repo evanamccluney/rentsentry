@@ -16,7 +16,7 @@ export default async function TenantsPage() {
     getCachedProfile(user!.id),
     supabase
       .from("interventions")
-      .select("tenant_id, type, sent_at, status")
+      .select("tenant_id, type, sent_at, status, snapshot")
       .eq("user_id", user!.id)
       .gte("sent_at", monthStart.toISOString())
       .order("sent_at", { ascending: false })

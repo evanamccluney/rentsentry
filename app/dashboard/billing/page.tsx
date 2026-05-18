@@ -154,7 +154,7 @@ export default async function BillingPage({
           </div>
         )}
 
-        <BillingButtons status={currentStatus} currentPlan={currentPlan} suggestedPlan={suggested} />
+        <BillingButtons status={currentStatus} currentPlan={currentPlan} suggestedPlan={suggested} trialActive={trial.active} />
 
         {!hasActiveSub && (
           <p className="text-[#4b5563] text-xs mt-4">

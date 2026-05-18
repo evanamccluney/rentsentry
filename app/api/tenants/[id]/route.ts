@@ -57,15 +57,17 @@ export async function PATCH(
     }
   }
 
-  const { error } = await supabase
+  const { data: saved, error } = await supabase
     .from("tenants")
     .update(patch)
     .eq("id", id)
     .eq("user_id", user.id)
+    .select("balance_due")
+    .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  revalidateTag(`tenant-data-${user.id}`, 'max')
+  revalidateTag(`tenant-data-${user.id}`)
 
-  return NextResponse.json({ ok: true })
+  return NextResponse.json({ ok: true, balance_due: saved?.balance_due ?? null })
 }

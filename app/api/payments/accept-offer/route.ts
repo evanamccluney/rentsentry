@@ -25,7 +25,7 @@ function buildInstallmentSchedule(
 }
 
 export async function POST(req: NextRequest) {
-  const { token, enableAutopay = false, installmentCount } = await req.json()
+  const { token, enableAutopay = false, installmentCount, pastDueOnly = false } = await req.json()
   if (!token) return NextResponse.json({ error: "Missing token" }, { status: 400 })
 
   const supabase = createServiceClient(
@@ -51,8 +51,10 @@ export async function POST(req: NextRequest) {
     rent_amount?: number
     // split_pay_offer
     total_amount?: number
+    balance_due?: number
     max_installments?: number
     min_installments?: number
+    includes_next_month?: boolean
     // shared
     expires_at: string
     offer_token: string
@@ -67,8 +69,13 @@ export async function POST(req: NextRequest) {
   let totalAmount: number
 
   if (offer.type === "split_pay_offer") {
-    totalAmount = snap.total_amount ?? 0
-    const maxInstallments = snap.max_installments ?? 3
+    const effectivePastDueOnly = pastDueOnly && snap.includes_next_month
+    totalAmount = effectivePastDueOnly
+      ? (snap.balance_due ?? snap.total_amount ?? 0)
+      : (snap.total_amount ?? 0)
+    const maxInstallments = effectivePastDueOnly
+      ? Math.min(3, snap.max_installments ?? 3)
+      : (snap.max_installments ?? 3)
     const minInstallments = snap.min_installments ?? 2
     const count = Math.min(maxInstallments, Math.max(minInstallments, installmentCount ?? minInstallments))
     installments = buildInstallmentSchedule(totalAmount, count)
@@ -171,6 +178,9 @@ export async function POST(req: NextRequest) {
       frequency: "biweekly",
       first_checkout_url: session.url,
       initiated_by: "tenant",
+      ...(offer.type === "split_pay_offer" && snap.includes_next_month
+        ? { past_due_only: pastDueOnly }
+        : {}),
     },
   })
 

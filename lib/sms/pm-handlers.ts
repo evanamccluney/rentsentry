@@ -9,41 +9,6 @@ import { twiml, parsePaidCodes, calcDaysPastDue, nextStepLabel } from "@/lib/sms
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!)
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? ""
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function offerRentReporting(supabase: any, tenantId: string, userId: string, amountPaid: number) {
-  try {
-    const { data: tenant } = await supabase
-      .from("tenants")
-      .select("name, phone, sms_opted_out, rent_reporting_opted_in")
-      .eq("id", tenantId)
-      .single()
-    if (!tenant || !tenant.phone || tenant.sms_opted_out || tenant.rent_reporting_opted_in) return
-    const { data: alreadyOffered } = await supabase
-      .from("interventions")
-      .select("id")
-      .eq("tenant_id", tenantId)
-      .eq("type", "rent_reporting_offer_sent")
-      .limit(1)
-    if ((alreadyOffered?.length ?? 0) > 0) return
-    const phone = normalizePhone(tenant.phone)
-    if (!phone) return
-    const sent = await sendTenantSms(supabase, tenantId, phone,
-      `Hi ${tenant.name.split(" ")[0]}, your $${amountPaid.toLocaleString()} rent payment was received! Reply REPORT to submit it to Experian & Equifax and build your credit history. Reply STOP to opt out.`)
-    if (sent) {
-      await supabase.from("interventions").insert({
-        tenant_id: tenantId,
-        user_id: userId,
-        type: "rent_reporting_offer_sent",
-        status: "pending",
-        sent_at: new Date().toISOString(),
-        notes: `Rent reporting offer sent after $${amountPaid} PM-confirmed payment`,
-      })
-    }
-  } catch (e) {
-    console.error(`pm-handlers: rent reporting offer failed — tenant ${tenantId}:`, e)
-  }
-}
-
 interface PmPrompt {
   id: string
   type: string
@@ -288,7 +253,6 @@ export async function handlePmReply(supabase: any, profileId: string, prompt: Pm
             sent_at: new Date().toISOString(),
             notes: `PM confirmed payment link was paid — $${payAmount} recorded`,
           })
-          await offerRentReporting(supabase, tenantId, profileId, payAmount)
         }
       }
       return twiml(`Got it — ${tenantName} marked as paid. Record updated.`)
@@ -384,8 +348,6 @@ export async function handlePmReply(supabase: any, profileId: string, prompt: Pm
         sent_at: new Date().toISOString(),
         notes: "PM confirmed payment via SMS reply",
       })
-      await offerRentReporting(supabase, t.tenant_id, profileId, payAmount)
-
       names.push(t.name)
     } catch (e) {
       console.error(`sms-webhook pm-confirm error for tenant ${t.tenant_id}:`, e)

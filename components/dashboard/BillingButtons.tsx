@@ -7,9 +7,10 @@ interface Props {
   status: string
   currentPlan?: string | null
   suggestedPlan?: string | null
+  trialActive?: boolean
 }
 
-export default function BillingButtons({ status, currentPlan, suggestedPlan }: Props) {
+export default function BillingButtons({ status, currentPlan, suggestedPlan, trialActive }: Props) {
   const [loading, setLoading] = useState<string | null>(null)
 
   async function startSubscription(plan: string) {
@@ -147,7 +148,9 @@ export default function BillingButtons({ status, currentPlan, suggestedPlan }: P
               ? "Loading…"
               : currentPlan === plan.id
               ? "Current Plan"
-              : "Start Free Trial"}
+              : trialActive
+              ? "Start Free Trial"
+              : "Subscribe"}
           </Button>
         </div>
       ))}
