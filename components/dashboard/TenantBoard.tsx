@@ -346,9 +346,9 @@ function computeScheduledDate(t: Tenant, pendingScheduled?: RecentActivity | nul
   return null
 }
 
-// Returns the next 8am UTC cron run at or after the given date
+// Returns the next 10am UTC cron run at or after the given date (matches vercel.json schedule)
 function nextCronRunAfter(d: Date): Date {
-  const atCron = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 8, 0, 0))
+  const atCron = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 10, 0, 0))
   return atCron > d ? atCron : new Date(atCron.getTime() + 86_400_000)
 }
 

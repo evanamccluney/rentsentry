@@ -43,7 +43,7 @@
  *   OFF → evaluate only, log as "dry_run"
  *
  * Secure: requires CRON_SECRET header or ?secret= param.
- * Schedule: run daily at 8am via Vercel Cron or cron-job.org.
+ * Schedule: run daily at 10am UTC via Vercel Cron (vercel.json: "0 10 * * *").
  */
 
 import { NextRequest, NextResponse } from "next/server"
