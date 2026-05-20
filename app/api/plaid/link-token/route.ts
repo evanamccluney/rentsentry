@@ -4,11 +4,6 @@ import { getPlaidClient } from "@/lib/plaid"
 import { Products, CountryCode } from "plaid"
 
 export async function POST(req: NextRequest) {
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  )
-
   const authHeader = req.headers.get("Authorization")
   if (!authHeader) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 

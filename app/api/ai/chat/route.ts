@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server"
 import { createClient as createServiceClient } from "@supabase/supabase-js"
 import { generateShortCode } from "@/lib/short-link"
 import { normalizePhone } from "@/lib/phone"
+import { isHighImpactAITool, summarizePendingAITools, userExplicitlyConfirmed } from "@/lib/ai-action-guard"
 
 function getOpenAI() {
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
@@ -196,8 +197,12 @@ export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
+  const userId = user.id
 
   const { messages } = await req.json()
+  const latestUserText = [...(messages as { role: string; content: string }[])]
+    .reverse()
+    .find(m => m.role === "user")?.content ?? ""
 
   const { data: tenants } = await supabase
     .from("tenants")
@@ -305,9 +310,15 @@ The tenant detail page now shows both action buttons — tell the PM they can ch
 
 ACTIVE HARDSHIP AGREEMENTS:
 ${hardships && hardships.length > 0
-  ? hardships.map((h: any) => {
+  ? hardships.map((h: {
+      snapshot: unknown
+      tenants?: { name?: string | null } | { name?: string | null }[] | null
+      sent_at: string
+      notes?: string | null
+    }) => {
       const s = h.snapshot as { hardship_type?: string; grace_agreed?: boolean; grace_until?: string; promised_amount?: number } | null
-      const name = h.tenants?.name ?? "Unknown"
+      const tenant = Array.isArray(h.tenants) ? h.tenants[0] : h.tenants
+      const name = tenant?.name ?? "Unknown"
       const type = s?.hardship_type ?? "unknown"
       const graceStr = s?.grace_agreed && s.grace_until ? ` — grace period until ${s.grace_until}` : ""
       const promiseStr = s?.promised_amount ? ` — promised $${s.promised_amount}` : ""
@@ -347,6 +358,19 @@ ADVICE ROLE:
     return NextResponse.json({ message: firstChoice.content || "Something went wrong." })
   }
 
+  const highImpactToolNames = firstChoice.tool_calls.flatMap(call => {
+    if (call.type !== "function") return []
+    return isHighImpactAITool(call.function.name) ? [call.function.name] : []
+  })
+
+  if (highImpactToolNames.length > 0 && !userExplicitlyConfirmed(latestUserText)) {
+    return NextResponse.json({
+      message: `I can do that, but it changes tenant records or sends/schedules tenant communication. Reply with "confirm" if you want me to execute: ${summarizePendingAITools(highImpactToolNames)}.`,
+      pending_tools: highImpactToolNames,
+      requires_confirmation: true,
+    })
+  }
+
   // Execute tool calls
   const toolResults: OpenAI.Chat.ChatCompletionMessageParam[] = []
 
@@ -354,6 +378,34 @@ ADVICE ROLE:
     if (call.type !== "function") continue
     const args = JSON.parse(call.function.arguments)
     let result = ""
+    const toolName = call.function.name
+
+    async function logToolAudit(status: "executed" | "failed", message: string) {
+      const tenantIds = new Set<string>()
+      const maybeArgs = args as {
+        tenant_id?: string
+        updates?: { tenant_id?: string }[]
+      }
+      if (maybeArgs.tenant_id) tenantIds.add(maybeArgs.tenant_id)
+      for (const update of maybeArgs.updates ?? []) {
+        if (update.tenant_id) tenantIds.add(update.tenant_id)
+      }
+      for (const tenantId of tenantIds) {
+        await supabase.from("interventions").insert({
+          tenant_id: tenantId,
+          user_id: userId,
+          type: "ai_tool_audit",
+          status,
+          sent_at: new Date().toISOString(),
+          notes: message,
+          snapshot: {
+            tool: toolName,
+            confirmed_by_user: userExplicitlyConfirmed(latestUserText),
+            args,
+          },
+        })
+      }
+    }
 
     if (call.function.name === "update_tenants") {
       const { updates } = args as {
@@ -616,13 +668,23 @@ ADVICE ROLE:
       }
 
     } else if (call.function.name === "schedule_sms" || call.function.name === "schedule_split_pay_offer") {
-      const { tenant_id, tenant_name, message } = args as {
-        tenant_id: string; tenant_name?: string; send_at: string; message?: string
+      const { tenant_id, tenant_name, send_at, message } = args as {
+        tenant_id: string; tenant_name?: string; send_at?: string; message?: string
       }
       const isSplitPay = call.function.name === "schedule_split_pay_offer"
-      // Always target the next daily automation run (10:00 AM UTC) so the countdown matches exactly
-      const today10am = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 10, 0, 0))
-      const nextRun = today10am > now ? today10am : new Date(today10am.getTime() + 86_400_000)
+      // Use requested send_at if provided; otherwise default to next automation run (16:00 UTC)
+      let scheduledFor: Date
+      if (send_at) {
+        scheduledFor = new Date(send_at)
+        if (isNaN(scheduledFor.getTime())) {
+          // Fallback if the AI gave a malformed date
+          const today16utc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 16, 0, 0))
+          scheduledFor = today16utc > now ? today16utc : new Date(today16utc.getTime() + 86_400_000)
+        }
+      } else {
+        const today16utc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 16, 0, 0))
+        scheduledFor = today16utc > now ? today16utc : new Date(today16utc.getTime() + 86_400_000)
+      }
       const { error } = await supabase.from("interventions").insert({
         tenant_id,
         user_id: user.id,
@@ -631,20 +693,31 @@ ADVICE ROLE:
         sent_at: now.toISOString(),
         notes: "Scheduled via AI assistant",
         snapshot: {
-          scheduled_for: nextRun.toISOString(),
+          scheduled_for: scheduledFor.toISOString(),
           ...(message ? { message } : {}),
         },
       })
       if (error) {
         result = `Failed to schedule for ${tenant_name ?? tenant_id}: ${error.message}`
       } else {
-        const runDate = nextRun.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })
-        const isToday = nextRun.toDateString() === now.toDateString()
+        const runDate = scheduledFor.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })
+        const isToday = scheduledFor.toDateString() === now.toDateString()
         const dateLabel = isToday ? "today" : `on ${runDate}`
         result = isSplitPay
-          ? `Payment plan offer queued for ${tenant_name ?? tenant_id} — will send ${dateLabel} at the next automation run (10:00 AM UTC). They'll receive a link to choose their installment plan.`
-          : `SMS queued for ${tenant_name ?? tenant_id} — will send ${dateLabel} at the next automation run (10:00 AM UTC).`
+          ? `Payment plan offer queued for ${tenant_name ?? tenant_id} — will send ${dateLabel} at the next automation run. They'll receive a link to choose their installment plan.`
+          : `SMS queued for ${tenant_name ?? tenant_id} — will send ${dateLabel} at the next automation run.`
       }
+    }
+
+    if (isHighImpactAITool(toolName)) {
+      const failed =
+        result.startsWith("Failed") ||
+        result.startsWith("All updates failed") ||
+        result === "Tenant not found." ||
+        result.includes("message not sent") ||
+        result.includes("no outstanding balance") ||
+        result.startsWith("Offer created but SMS failed")
+      await logToolAudit(failed ? "failed" : "executed", result || "Tool executed.")
     }
 
     toolResults.push({

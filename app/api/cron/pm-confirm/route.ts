@@ -29,8 +29,9 @@ function daysUntilDueDate(dueDayOfMonth: number): number {
 }
 
 export async function GET(req: NextRequest) {
-  const secret = req.headers.get("x-cron-secret") ?? req.nextUrl.searchParams.get("secret")
-  if (secret !== process.env.CRON_SECRET) {
+  const authHeader = req.headers.get("authorization")
+  const querySecret = req.nextUrl.searchParams.get("secret")
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}` && querySecret !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
@@ -91,25 +92,23 @@ export async function GET(req: NextRequest) {
 
     if (alreadySent && alreadySent.length > 0) { results.skipped_already_sent++; continue }
 
-    // Build the confirmation list with numeric codes
+    // Build the confirmation list with index and status
+    const token = crypto.randomUUID()
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
     const confirmations = needsConfirm.map((t: { id: string; name: string; unit: string; rent_amount: number; balance_due: number }, i: number) => ({
-      code: i + 1,
+      index: i,
       tenant_id: t.id,
       name: t.name,
       unit: t.unit ?? null,
-      amount: t.rent_amount ?? 0,
+      amount: (t.balance_due ?? 0) > 0 ? (t.balance_due as number) : (t.rent_amount ?? 0),
+      status: 'pending' as const,
     }))
 
     // Build SMS body
-    let smsBody: string
-    if (confirmations.length === 1) {
-      const t = confirmations[0]
-      const unitStr = t.unit ? ` (Unit ${t.unit})` : ""
-      smsBody = `RentSentry: Has ${t.name}${unitStr} paid $${t.amount.toLocaleString()} this month? Reply YES or NO.`
-    } else {
-      const lines = confirmations.map((t: { code: number; name: string; amount: number }) => `${t.code}. ${t.name} $${t.amount.toLocaleString()}`).join("\n")
-      smsBody = `RentSentry: Please confirm payments received:\n${lines}\nReply PAID followed by numbers (e.g. PAID 1,2) or ALL or NONE.`
-    }
+    const confirmUrl = `${process.env.NEXT_PUBLIC_APP_URL}/pm/confirm/${token}`
+    const smsBody = confirmations.length === 1
+      ? `RentSentry: Has ${confirmations[0].name}${confirmations[0].unit ? ` (Unit ${confirmations[0].unit})` : ''} paid $${confirmations[0].amount.toLocaleString()} this month? Confirm: ${confirmUrl}`
+      : `RentSentry: ${confirmations.length} tenants have outstanding balances — confirm which have paid: ${confirmUrl}`
 
     try {
       await twilioClient.messages.create({ from: FROM_NUMBER, to: pmPhone, body: smsBody })
@@ -121,7 +120,7 @@ export async function GET(req: NextRequest) {
         status: "pending",
         sent_at: new Date().toISOString(),
         notes: `Confirmation sent for ${confirmations.length} tenant(s)`,
-        snapshot: { confirmations, date: today },
+        snapshot: { token, expires_at: expiresAt, confirmations, date: today },
       })
 
       results.confirmations_sent++

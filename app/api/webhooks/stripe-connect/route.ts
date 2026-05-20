@@ -66,12 +66,17 @@ export async function POST(req: NextRequest) {
     // ── Guard: bail if tenant no longer exists ─────────────────────────────────
     const { data: tenant } = await supabase
       .from("tenants")
-      .select("id, balance_due")
+      .select("id, user_id, balance_due")
       .eq("id", tenantId)
       .maybeSingle()
 
     if (!tenant) {
       console.error(`stripe-connect webhook: tenant ${tenantId} not found for event ${event.id}`)
+      return NextResponse.json({ received: true })
+    }
+
+    if (tenant.user_id !== landlordId) {
+      console.error(`stripe-connect webhook: landlordId mismatch — metadata says ${landlordId} but tenant ${tenantId} belongs to ${tenant.user_id}`)
       return NextResponse.json({ received: true })
     }
 

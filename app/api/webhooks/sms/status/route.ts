@@ -43,15 +43,12 @@ export async function POST(req: NextRequest) {
   const lastTen = toPhone.replace(/\D/g, "").slice(-10)
   const { data: candidates } = await supabase
     .from("tenants")
-    .select("id, name, unit, user_id")
+    .select("id, name, unit, user_id, phone")
     .like("phone", `%${lastTen}`)
     .eq("status", "active")
 
   const tenant = (candidates ?? []).find(
-    (t: { id: string; name: string; unit: string; user_id: string }) => {
-      const { normalizePhone: np } = require("@/lib/phone")
-      return np(t.id) === toPhone
-    }
+    (t: { phone: string | null }) => normalizePhone(t.phone) === toPhone
   ) ?? candidates?.[0]
 
   if (!tenant) return new NextResponse("", { status: 204 })

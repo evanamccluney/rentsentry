@@ -1,36 +1,43 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# RentSentry
 
-## Getting Started
+RentSentry is a delinquency workflow app for small landlords and property managers. It imports a rent roll, scores tenant risk, sends reminders/payment-plan links, tracks activity, and prepares attorney-review-ready notice drafts.
 
-First, run the development server:
+## Stack
+
+- Next.js app router
+- Supabase auth, Postgres, and RLS
+- Stripe and Stripe Connect for payments
+- Twilio for SMS
+- Resend for email alerts
+- Vitest for business-logic tests
+
+## Local Development
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Verification
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm test
+npm run lint
+npm run build
+```
 
-## Learn More
+`npm run build` performs TypeScript checking. Do not re-enable `typescript.ignoreBuildErrors`.
 
-To learn more about Next.js, take a look at the following resources:
+## Database
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Apply migrations in `supabase/migrations` before deploying. Important security expectations:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- tenant, property, payment, intervention, upload, profile, and subscription tables must have RLS enabled
+- service-role routes should stay limited to trusted webhook, cron, and tenant-session flows
+- payment rows must always be scoped by `user_id`
 
-## Deploy on Vercel
+## Legal Notice Caveat
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Notice drafts are not legal advice and are not guaranteed court-ready. Requirements vary by state, county, city, tenancy type, service method, rent/fee composition, and current law. Verify every notice with local counsel before service.

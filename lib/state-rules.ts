@@ -11,7 +11,7 @@ export const STATE_EVICTION_WEEKS: Record<string, number> = {
 // Statutory days tenant has to pay or quit before landlord can file
 export const STATE_NOTICE_DAYS: Record<string, number> = {
   TX: 3,  AZ: 5,  AL: 7,  AR: 3,  CO: 10, GA: 3,  FL: 3,  NC: 10, IN: 10, TN: 14,
-  OH: 3,  MO: 3,  MI: 7,  PA: 10, VA: 5,  WA: 14, OR: 3,  IL: 5,  MD: 3,  NJ: 30,
+  OH: 3,  MO: 3,  MI: 7,  PA: 10, VA: 5,  WA: 14, OR: 10, IL: 5,  MD: 10, NJ: 30,
   NY: 14, CA: 3,  MA: 14, CT: 3,  VT: 14,
 }
 

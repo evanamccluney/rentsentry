@@ -39,7 +39,7 @@ function buildHtml(type: NoticeType, props: Props, violationNote: string): strin
   deadline.setDate(deadline.getDate() + days)
   const location = propertyAddress ?? propertyName ?? "the above-described premises"
   const stateLabel = propertyState ? ` (${propertyState})` : ""
-  const totalDue = balanceDue + lateFee
+  const rentOnlyDue = balanceDue
 
   const baseStyles = `
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -74,21 +74,21 @@ td:first-child { font-weight:bold; width:40%; background:#f9f9f9; }
   <p class="body-text"><span class="label">To:</span> ${tenantName}<br/>Unit ${unit}, ${location}${stateLabel}</p>
 </div>
 <div class="section">
-  <p class="body-text">YOU ARE HEREBY NOTIFIED that rent is past due and unpaid. Within <strong>${days} days</strong> of service, you must either pay the full amount below OR vacate the premises.</p>
-  <p class="body-text">Failure to comply will result in legal proceedings for possession, unpaid rent, fees, costs, and attorney fees.</p>
+  <p class="body-text">YOU ARE HEREBY NOTIFIED that rent is past due and unpaid. Within <strong>${days} days</strong> of service, you must either pay the rent-only amount below OR vacate the premises.</p>
+  <p class="body-text">Failure to comply may result in legal proceedings for possession and other amounts permitted by law.</p>
 </div>
 <div class="section">
   <p class="label" style="margin-bottom:8px;">Amount Due:</p>
   <table>
     <tr><td>Monthly rent</td><td>$${rentAmount.toLocaleString("en-US",{minimumFractionDigits:2})}</td></tr>
-    <tr><td>Outstanding balance</td><td>$${balanceDue.toLocaleString("en-US",{minimumFractionDigits:2})}</td></tr>
-    ${lateFee > 0 ? `<tr><td>Late fees</td><td>$${lateFee.toLocaleString("en-US",{minimumFractionDigits:2})}</td></tr>` : ""}
-    <tr class="total"><td>TOTAL DUE</td><td>$${totalDue.toLocaleString("en-US",{minimumFractionDigits:2})}</td></tr>
+    <tr><td>Rent-only amount claimed due</td><td>$${rentOnlyDue.toLocaleString("en-US",{minimumFractionDigits:2})}</td></tr>
+    ${lateFee > 0 ? `<tr><td>Late fees excluded from this notice draft</td><td>$${lateFee.toLocaleString("en-US",{minimumFractionDigits:2})}</td></tr>` : ""}
+    <tr class="total"><td>RENT AMOUNT TO CURE</td><td>$${rentOnlyDue.toLocaleString("en-US",{minimumFractionDigits:2})}</td></tr>
   </table>
 </div>
 <div class="section">
   <p class="body-text"><span class="label">Deadline:</span> ${fmt(deadline)} (${days} days from service${stateLabel})</p>
-  <p class="body-text">Partial payments do not cure this notice unless expressly accepted in writing.</p>
+  <p class="body-text">This draft intentionally excludes late fees from the cure amount. Verify whether your jurisdiction allows any non-rent amounts before serving.</p>
 </div>
 ${sig}${footer}`
   }

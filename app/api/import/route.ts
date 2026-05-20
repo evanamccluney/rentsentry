@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { revalidateTag } from "next/cache"
-import type { TenantImportRow } from "@/lib/import-mappers"
+import type { Platform, TenantImportRow } from "@/lib/import-mappers"
 import { normalizePhone } from "@/lib/phone"
 import { planLimitFor, isOnTrial } from "@/lib/plan-limits"
 import { inferDelinquencyStartDate } from "@/lib/delinquency"
@@ -11,9 +11,12 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 })
 
-  const { rows, propertyId } = await req.json() as {
+  const { rows, propertyId, platform, columnMapping, filename } = await req.json() as {
     rows: TenantImportRow[]
     propertyId: string | null
+    platform?: Platform | null
+    columnMapping?: Record<string, keyof TenantImportRow> | null
+    filename?: string | null
   }
 
   if (!rows?.length) return NextResponse.json({ error: "No rows provided" }, { status: 400 })
@@ -119,7 +122,25 @@ export async function POST(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
+  await supabase.from("csv_uploads").insert({
+    user_id: user.id,
+    property_id: propertyId ?? null,
+    filename: filename?.trim() || "tenant-import.csv",
+    rows_imported: inserts.length,
+    status: "complete",
+  })
+
+  if (platform && columnMapping && Object.keys(columnMapping).length > 0) {
+    await supabase.from("import_profiles").upsert({
+      user_id: user.id,
+      platform,
+      column_mapping: columnMapping,
+      property_id: propertyId ?? null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "user_id" })
+  }
+
   revalidateTag(`tenant-data-${user.id}`, 'max')
 
-  return NextResponse.json({ ok: true, upserted: inserts.length })
+  return NextResponse.json({ ok: true, imported: inserts.length, upserted: inserts.length })
 }

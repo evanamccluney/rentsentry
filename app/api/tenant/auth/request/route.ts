@@ -3,6 +3,8 @@ import { createClient } from "@supabase/supabase-js"
 import { normalizePhone } from "@/lib/phone"
 import twilio from "twilio"
 import { PENDING_PHONE_COOKIE } from "@/lib/tenant-auth"
+import { checkRateLimit } from "@/lib/rate-limit"
+import { generateTenantOtp } from "@/lib/tenant-otp"
 
 export async function POST(req: NextRequest) {
   const { phone } = await req.json()
@@ -10,6 +12,14 @@ export async function POST(req: NextRequest) {
 
   const normalized = normalizePhone(phone)
   if (!normalized) return NextResponse.json({ error: "Invalid phone number" }, { status: 400 })
+
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown"
+  if (!checkRateLimit(`tenant-otp:phone:${normalized}`, 3, 10 * 60 * 1000)) {
+    return NextResponse.json({ ok: true })
+  }
+  if (!checkRateLimit(`tenant-otp:ip:${ip}`, 20, 10 * 60 * 1000)) {
+    return NextResponse.json({ ok: true })
+  }
 
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -37,7 +47,7 @@ export async function POST(req: NextRequest) {
     .eq("type", "tenant_otp")
     .eq("status", "pending")
 
-  const code = Math.floor(100000 + Math.random() * 900000).toString()
+  const code = generateTenantOtp()
   const expiresAt = new Date(Date.now() + 10 * 60000).toISOString()
 
   await supabase.from("interventions").insert({

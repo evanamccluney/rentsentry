@@ -102,6 +102,7 @@ export default function UploadPage() {
   const [defaultRent, setDefaultRent] = useState("")
   const [existingProperties, setExistingProperties] = useState<ExistingProperty[]>([])
   const [selectedPropertyId, setSelectedPropertyId] = useState<string>("__new__")
+  const [currentFilename, setCurrentFilename] = useState<string | null>(null)
 
   useEffect(() => {
     async function loadProperties() {
@@ -123,6 +124,7 @@ export default function UploadPage() {
   }, [])
 
   const handleFile = useCallback((file: File) => {
+    setCurrentFilename(file.name)
     const reader = new FileReader()
     reader.onload = (e) => {
       const text = e.target?.result as string
@@ -348,6 +350,14 @@ export default function UploadPage() {
       .from("properties")
       .update({ total_units: inserted })
       .eq("id", resolvedPropertyId)
+
+    await supabase.from("csv_uploads").insert({
+      property_id: resolvedPropertyId ?? null,
+      user_id: user.id,
+      filename: currentFilename || "rent-roll.csv",
+      rows_imported: inserted,
+      status: "complete",
+    })
 
     // Auto-log payments for tenants whose balance cleared to $0
     const paidUnits = [...changeMap.entries()]

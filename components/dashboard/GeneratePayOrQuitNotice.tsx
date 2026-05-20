@@ -31,7 +31,7 @@ function buildNoticeHtml(props: Props): string {
   const fmt = (d: Date) => d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
   const location = propertyAddress ?? propertyName ?? "the above-described premises"
   const stateLabel = propertyState ? ` (${propertyState})` : ""
-  const totalDue = balanceDue + lateFee
+  const rentOnlyDue = balanceDue
 
   return `<!DOCTYPE html>
 <html>
@@ -96,11 +96,11 @@ function buildNoticeHtml(props: Props): string {
       Within <strong>${days} days</strong> of service of this notice, you must either:
     </p>
     <p class="body-text" style="margin-left:24px;">
-      (1) Pay the full amount of rent due as set forth below, <strong>OR</strong><br/>
+      (1) Pay the rent-only amount due as set forth below, <strong>OR</strong><br/>
       (2) Vacate and deliver up possession of the premises.
     </p>
     <p class="body-text">
-      Failure to pay the full amount or vacate within the time stated will result in legal proceedings to recover possession of the premises, all unpaid rent, applicable fees, court costs, and attorney fees.
+      Failure to pay the rent-only amount or vacate within the time stated may result in legal proceedings to recover possession and other amounts permitted by law.
     </p>
   </div>
 
@@ -108,9 +108,9 @@ function buildNoticeHtml(props: Props): string {
     <p class="label" style="margin-bottom:8px;">Amount Due:</p>
     <table>
       <tr><td>Monthly rent</td><td>$${rentAmount.toLocaleString("en-US", { minimumFractionDigits: 2 })}</td></tr>
-      <tr><td>Outstanding balance</td><td>$${balanceDue.toLocaleString("en-US", { minimumFractionDigits: 2 })}</td></tr>
-      ${lateFee > 0 ? `<tr><td>Late fees</td><td>$${lateFee.toLocaleString("en-US", { minimumFractionDigits: 2 })}</td></tr>` : ""}
-      <tr class="total"><td>TOTAL AMOUNT DUE</td><td>$${totalDue.toLocaleString("en-US", { minimumFractionDigits: 2 })}</td></tr>
+      <tr><td>Rent-only amount claimed due</td><td>$${rentOnlyDue.toLocaleString("en-US", { minimumFractionDigits: 2 })}</td></tr>
+      ${lateFee > 0 ? `<tr><td>Late fees excluded from this notice draft</td><td>$${lateFee.toLocaleString("en-US", { minimumFractionDigits: 2 })}</td></tr>` : ""}
+      <tr class="total"><td>RENT AMOUNT TO CURE</td><td>$${rentOnlyDue.toLocaleString("en-US", { minimumFractionDigits: 2 })}</td></tr>
     </table>
   </div>
 
@@ -119,7 +119,7 @@ function buildNoticeHtml(props: Props): string {
       <span class="label">Pay-or-quit deadline:</span> ${fmt(deadline)} (${days} days from service date${stateLabel})
     </p>
     <p class="body-text">
-      Payment must be made in full by the deadline stated above. Partial payments do not cure this notice unless expressly accepted in writing by the property manager.
+      This draft intentionally excludes late fees from the cure amount. Verify whether your jurisdiction allows any non-rent amounts before serving.
     </p>
   </div>
 

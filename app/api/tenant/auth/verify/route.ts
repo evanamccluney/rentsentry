@@ -39,10 +39,19 @@ export async function POST(req: NextRequest) {
   const otp = otps?.[0]
   if (!otp) return NextResponse.json({ error: "Invalid code." }, { status: 401 })
 
-  const snap = otp.snapshot as { code?: string; expires_at?: string } | null
+  const snap = otp.snapshot as { code?: string; expires_at?: string; attempts?: number } | null
   if (!snap?.code || !snap.expires_at) return NextResponse.json({ error: "Invalid code." }, { status: 401 })
   if (new Date(snap.expires_at) < new Date()) return NextResponse.json({ error: "Code expired. Please request a new one." }, { status: 401 })
-  if (snap.code !== code.trim()) return NextResponse.json({ error: "Incorrect code." }, { status: 401 })
+
+  const attempts = (snap.attempts ?? 0) + 1
+  if (snap.code !== code.trim()) {
+    if (attempts >= 5) {
+      await supabase.from("interventions").update({ status: "resolved", snapshot: { ...snap, attempts } }).eq("id", otp.id)
+      return NextResponse.json({ error: "Too many incorrect attempts. Please request a new code." }, { status: 429 })
+    }
+    await supabase.from("interventions").update({ snapshot: { ...snap, attempts } }).eq("id", otp.id)
+    return NextResponse.json({ error: "Incorrect code." }, { status: 401 })
+  }
 
   // Mark OTP as used
   await supabase.from("interventions").update({ status: "resolved" }).eq("id", otp.id)

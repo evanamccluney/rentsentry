@@ -14,7 +14,7 @@ create table if not exists properties (
 -- Tenants table (populated from CSV upload)
 create table if not exists tenants (
   id uuid primary key default gen_random_uuid(),
-  property_id uuid references properties(id) on delete cascade not null,
+  property_id uuid references properties(id) on delete set null,
   user_id uuid references auth.users(id) on delete cascade not null,
   unit text not null,
   name text not null,
@@ -94,13 +94,21 @@ create table if not exists utility_audits (
 -- CSV upload history
 create table if not exists csv_uploads (
   id uuid primary key default gen_random_uuid(),
-  property_id uuid references properties(id) on delete cascade not null,
+  property_id uuid references properties(id) on delete cascade,
   user_id uuid references auth.users(id) on delete cascade not null,
   filename text not null,
   rows_imported integer default 0,
   status text default 'processing', -- 'processing', 'complete', 'error'
   error_message text,
   created_at timestamptz default now()
+);
+
+create table if not exists import_profiles (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  platform text,
+  column_mapping jsonb not null default '{}'::jsonb,
+  property_id uuid references properties(id) on delete set null,
+  updated_at timestamptz default now()
 );
 
 -- PM Profiles table (escalation preferences)
@@ -147,15 +155,19 @@ create table if not exists subscriptions (
 -- RLS Policies
 alter table properties enable row level security;
 alter table tenants enable row level security;
+alter table payments enable row level security;
 alter table interventions enable row level security;
 alter table utility_audits enable row level security;
 alter table csv_uploads enable row level security;
+alter table import_profiles enable row level security;
 
 create policy "Users own their properties" on properties for all using (auth.uid() = user_id);
 create policy "Users own their tenants" on tenants for all using (auth.uid() = user_id);
+create policy "Users own their payments" on payments for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "Users own their interventions" on interventions for all using (auth.uid() = user_id);
 create policy "Users own their utility audits" on utility_audits for all using (auth.uid() = user_id);
 create policy "Users own their csv uploads" on csv_uploads for all using (auth.uid() = user_id);
+create policy "Users own their import profile" on import_profiles for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 alter table subscriptions enable row level security;
 create policy "Users own their subscription" on subscriptions for all using (auth.uid() = user_id);

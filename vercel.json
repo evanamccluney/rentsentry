@@ -2,27 +2,27 @@
   "crons": [
     {
       "path": "/api/cron/charge-installments",
-      "schedule": "0 6 * * *"
+      "schedule": "0 10 * * *"
     },
     {
       "path": "/api/cron/charge-monthly-autopay",
-      "schedule": "0 6 * * *"
+      "schedule": "0 10 * * *"
     },
     {
       "path": "/api/cron/phase1",
-      "schedule": "0 8 * * *"
-    },
-    {
-      "path": "/api/cron/phase2",
-      "schedule": "0 9 * * *"
+      "schedule": "0 13 * * *"
     },
     {
       "path": "/api/cron/pm-confirm",
-      "schedule": "0 9 * * *"
+      "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/cron/phase2",
+      "schedule": "30 14 * * *"
     },
     {
       "path": "/api/cron/automation",
-      "schedule": "0 10 * * *"
+      "schedule": "0 16 * * *"
     }
   ]
 }

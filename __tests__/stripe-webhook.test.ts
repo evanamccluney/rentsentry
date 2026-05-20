@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect } from "vitest"
 
 /**
  * Tests for the business-critical paths in the stripe-connect webhook:
@@ -10,8 +10,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 
 describe("Webhook idempotency", () => {
   it("marks an event as already processed when stripe_event_id matches", () => {
-    const eventId = "evt_test_123"
-
     // Simulate what the DB returns when the event was already processed
     const alreadyProcessed = { id: "intervention-1" }
 

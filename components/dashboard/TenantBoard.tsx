@@ -60,7 +60,7 @@ interface PaymentRecord {
 // needs_review → queued → sent (clear linear progression)
 // "queued" = auto mode on, scheduled date computed, not yet sent
 // "sent"   = intervention with status "sent" exists this month
-type AutoStatus = "needs_review" | "queued" | "sent" | "paused" | "healthy"
+type AutoStatus = "needs_review" | "queued" | "active" | "your_move" | "paused" | "healthy"
 
 interface Tenant {
   id: string
@@ -254,12 +254,19 @@ const AUTO_STATUS_CONFIG: Record<AutoStatus, {
     badgeStyle: "bg-blue-400/10 text-blue-400 border-blue-400/20",
     opacity: "opacity-80",
   },
-  sent: {
-    label: "Sent",
+  active: {
+    label: "Active",
     dot: "bg-emerald-500",
     textColor: "text-emerald-400",
     badgeStyle: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
     opacity: "opacity-60",
+  },
+  your_move: {
+    label: "Approve Send",
+    dot: "bg-amber-400 animate-pulse",
+    textColor: "text-amber-400",
+    badgeStyle: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+    opacity: "",
   },
   paused: {
     label: "Paused",
@@ -291,6 +298,11 @@ const ACTIVITY_TYPE_LABELS: Record<string, string> = {
   card_expiry_7:        "payment reminder",
   no_payment_method:    "payment method alert",
   split_pay_offer:      "payment plan offer",
+  plan_followup:        "payment plan follow-up",
+  plan_escalation:      "escalation notice",
+  payment_plan_agreed:  "payment plan accepted",
+  payment_link_paid:    "payment received",
+  pm_confirmed_paid:    "payment confirmed by PM",
   cash_for_keys:        "Cash for Keys offer",
   legal_packet:         "legal notice",
 }
@@ -346,9 +358,9 @@ function computeScheduledDate(t: Tenant, pendingScheduled?: RecentActivity | nul
   return null
 }
 
-// Returns the next 10am UTC cron run at or after the given date (matches vercel.json schedule)
+// Returns the next 12pm ET (16:00 UTC / noon EDT) cron run at or after the given date (matches vercel.json schedule)
 function nextCronRunAfter(d: Date): Date {
-  const atCron = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 10, 0, 0))
+  const atCron = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 16, 0, 0))
   return atCron > d ? atCron : new Date(atCron.getTime() + 86_400_000)
 }
 
@@ -413,7 +425,8 @@ function getAutoStatus(
   t: Tenant,
   recentActivity: RecentActivity[],
   pausedTenants: Set<string>,
-  autoMode: boolean
+  autoMode: boolean,
+  tenantInApprovalBatch: Set<string>,
 ): AutoStatus {
   if (pausedTenants.has(t.id)) return "paused"
 
@@ -429,10 +442,13 @@ function getAutoStatus(
 
   if (t.tier === "healthy") return "healthy"
 
+  // Batch approval link was sent to PM — tenant follow-up/escalation is pending PM review
+  if (tenantInApprovalBatch.has(t.id)) return "your_move"
+
   const wasSentRecently = recentActivity.some(
     a => a.tenant_id === t.id && a.status === "sent"
   )
-  if (wasSentRecently) return "sent"
+  if (wasSentRecently) return "active"
 
   const hasPendingScheduled = recentActivity.some(
     a => a.tenant_id === t.id
@@ -491,13 +507,25 @@ function getSystemMessage(
     return { primary: "Automation paused" }
   }
 
-  if (status === "sent") {
+  if (status === "your_move") {
+    return {
+      primary: "Follow-up approval pending",
+      secondary: "Check your SMS for the RentSentry review link.",
+    }
+  }
+
+  if (status === "active") {
     const last = recentActivity.find(a => a.tenant_id === t.id && a.status === "sent")
     const typeLabel = last ? (ACTIVITY_TYPE_LABELS[last.type] ?? last.type) : "action"
     const when = last ? formatSentTime(last.sent_at) : "this month"
+    const secondary =
+      last?.type === "payment_plan_agreed" ? "Installment schedule active" :
+      last?.type === "payment_link_paid"   ? "Payment received" :
+      last?.type === "pm_confirmed_paid"   ? "Payment received" :
+      "Awaiting tenant response"
     return {
       primary: `${typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1)} sent ${when}`,
-      secondary: "Awaiting tenant response",
+      secondary,
     }
   }
 
@@ -731,13 +759,14 @@ function PortfolioSummaryStrip({ stats }: { stats: PortfolioStats }) {
 
 // ── FilterBar ─────────────────────────────────────────────────────────────────
 
-type FilterKey = "all" | "needs_review" | "queued" | "sent" | "paused" | "healthy"
+type FilterKey = "all" | "needs_review" | "queued" | "active" | "your_move" | "paused" | "healthy"
 
 const FILTER_TABS: { key: FilterKey; label: string }[] = [
   { key: "all",          label: "All" },
   { key: "needs_review", label: "Needs Review" },
+  { key: "your_move",    label: "Approve Send" },
   { key: "queued",       label: "Scheduled" },
-  { key: "sent",         label: "Sent" },
+  { key: "active",       label: "Active" },
   { key: "paused",       label: "Paused" },
   { key: "healthy",      label: "Healthy" },
 ]
@@ -1693,11 +1722,11 @@ function TenantCard({
   // Derive CFK outcome state — local override takes priority over DB value
   const cfkOutcomeKey = (localCfkOutcome ?? t.resolution_status ?? null) as CfkOutcomeKey | null
   const isCfkWithOutcome = t.tier === "cash_for_keys" && cfkOutcomeKey?.startsWith("cfk_")
-  const isCfkSent = t.tier === "cash_for_keys" && (autoStatus === "sent" || isCfkWithOutcome)
+  const isCfkSent = t.tier === "cash_for_keys" && (autoStatus === "active" || autoStatus === "your_move" || isCfkWithOutcome)
   const cfkOutcomeCfg = cfkOutcomeKey && isCfkWithOutcome ? CFK_OUTCOME_CONFIG[cfkOutcomeKey] : null
 
   // Optimistic state: immediately transition to "queued" after PM approves action,
-  // then server refresh will confirm with "sent" from DB (clearing this override).
+  // then server refresh will confirm with "active" from DB (clearing this override).
   const [localStatus, setLocalStatus] = useState<AutoStatus | null>(null)
   const [localSentAt, setLocalSentAt] = useState<string | null>(null)
   // Clear optimistic override whenever the server-derived status changes
@@ -1708,14 +1737,14 @@ function TenantCard({
   const effectiveSystemMsg: typeof systemMsg =
     localStatus === "queued"
       ? { primary: "Sending now · notification in progress" }
-      : localStatus === "sent" && localSentAt
+      : localStatus === "active" && localSentAt
       ? { primary: `Sent ${formatSentTime(localSentAt)}`, secondary: "Awaiting tenant response" }
       : systemMsg
 
   const config = TIER_CONFIG[t.tier]
   const statusCfg = AUTO_STATUS_CONFIG[effectiveStatus]
   const isPaused = effectiveStatus === "paused"
-  const isSent = effectiveStatus === "sent"
+  const isActive = effectiveStatus === "active" || effectiveStatus === "your_move"
   const hasBalance = (t.balance_due ?? 0) > 0
   const rules = normalizeEscalationRules(escalationRules)
   const actionThreshold = hasBalance
@@ -1736,15 +1765,17 @@ function TenantCard({
       && new Date(a.snapshot.scheduled_for) > new Date()
   )
   const scheduledAction = effectiveStatus === "queued"
-    ? (computeScheduledDate(t, pendingScheduledForCard) ?? {
-        what: t.tier === "payment_plan" ? "Payment plan offer" : t.tier === "reminder" ? "Balance reminder" : "Message",
+    ? {
+        what: pendingScheduledForCard
+          ? (pendingScheduledForCard.type === "scheduled_split_pay_offer" ? "Payment plan offer" : "Message")
+          : t.tier === "payment_plan" ? "Payment plan offer" : t.tier === "reminder" ? "Balance reminder" : "Message",
         date: computeNextAutoSendDate(t.id, recentActivity),
         reason: "Auto",
-      })
+      }
     : null
 
   // Detect payment plan offer sent 3+ days ago with no response yet
-  const pendingPlanOffer = (() => {
+  const planOfferStatus = (() => {
     const tenantActivity = recentActivity.filter(a => a.tenant_id === t.id)
     const planAgreed = tenantActivity.some(a => a.type === "payment_plan_agreed")
     if (planAgreed) return null
@@ -1752,11 +1783,25 @@ function TenantCard({
       a => (a.type === "split_pay_offer" || a.type === "pre_due_installment_offer") && a.status === "sent"
     )
     if (!offer) return null
-    const daysSinceSent = Math.floor((Date.now() - new Date(offer.sent_at).getTime()) / 86_400_000)
-    return daysSinceSent >= 3 ? daysSinceSent : null
+    const sentAt = new Date(offer.sent_at)
+    const daysSinceSent = Math.floor((Date.now() - sentAt.getTime()) / 86_400_000)
+    return { sentAt, daysSinceSent }
+  })()
+  const pendingPlanOffer = planOfferStatus && planOfferStatus.daysSinceSent >= 3 ? planOfferStatus.daysSinceSent : null
+  const nextFollowUpAction: ScheduledAction | null = (() => {
+    if (!planOfferStatus) return null
+    const { sentAt, daysSinceSent } = planOfferStatus
+    if (daysSinceSent < 3) {
+      return { what: "Follow-up SMS", date: nextCronRunAfter(new Date(sentAt.getTime() + 3 * 86_400_000)), reason: "No response" }
+    }
+    if (daysSinceSent < 7) {
+      return { what: "Escalation notice", date: nextCronRunAfter(new Date(sentAt.getTime() + 7 * 86_400_000)), reason: "No response" }
+    }
+    return null
   })()
   const manualIntakeHold = t.intake_action === "manual_review" || t.intake_action === "no_contact"
-  const needsIntakeReview = autoMode && manualIntakeHold && hasBalance && t.auto_contact_approved === false
+  const isAutoEligibleTier = t.tier === "reminder" || t.tier === "payment_plan"
+  const needsIntakeReview = autoMode && manualIntakeHold && hasBalance && t.auto_contact_approved === false && !(autoMode && isAutoEligibleTier)
   // "Review & Send" only applies to tiers requiring PM approval, not already sent/queued/paused
   const canReviewSend = !needsIntakeReview && t.action_type && effectiveStatus === "needs_review"
   async function trigger(type: string, message?: string) {
@@ -1998,6 +2043,14 @@ function TenantCard({
                 · <Countdown targetDate={scheduledAction.date} />
               </span>
             )}
+            {effectiveStatus === "active" && nextFollowUpAction && (
+              <span className="shrink-0 text-amber-400 font-medium">
+                · {nextFollowUpAction.what} {formatActionDate(nextFollowUpAction.date)}
+              </span>
+            )}
+            {effectiveStatus === "your_move" && (
+              <span className="shrink-0 text-amber-400 font-medium">· Pending your approval</span>
+            )}
           </div>
           {/* Actions */}
           <div className="flex items-center gap-1.5 justify-end">
@@ -2016,7 +2069,7 @@ function TenantCard({
                 <Send size={11} />{loading ? "…" : "Review"}
               </button>
             )}
-            {hasBalance && !isPaused && !isSent && (
+            {hasBalance && !isPaused && (
               <button onClick={() => setMarkingPaid(true)} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600/15 text-emerald-400 hover:bg-emerald-600/25 border border-emerald-500/20 transition-colors">
                 <DollarSign size={11} />Paid
               </button>
@@ -2057,7 +2110,7 @@ function TenantCard({
                   : isCfkSent && !cfkOutcomeCfg
                   ? "Cash for Keys · In Progress"
                   : statusCfg.label}
-                {t.tier !== "healthy" && !cfkOutcomeCfg && (
+                {t.tier !== "healthy" && !cfkOutcomeCfg && !isActive && (
                   <span className="text-[#71717a] ml-1">· {config.badge}</span>
                 )}
               </span>
@@ -2124,6 +2177,14 @@ function TenantCard({
                   · <Countdown targetDate={scheduledAction.date} />
                 </span>
               )}
+              {effectiveStatus === "active" && nextFollowUpAction && (
+                <span className="text-amber-400 font-medium ml-1">
+                  · {nextFollowUpAction.what} {formatActionDate(nextFollowUpAction.date)}
+                </span>
+              )}
+              {effectiveStatus === "your_move" && (
+                <span className="text-amber-400 font-medium ml-1">· Pending your approval</span>
+              )}
               {effectiveSystemMsg.reason && (
                 <span className="text-[#71717a] ml-1">· {effectiveSystemMsg.reason}</span>
               )}
@@ -2179,7 +2240,7 @@ function TenantCard({
             </button>
           )}
 
-          {hasBalance && !isPaused && !isSent && (
+          {hasBalance && !isPaused && (
             <button
               onClick={() => setMarkingPaid(true)}
               className={`py-2 rounded-lg text-xs font-semibold transition-all bg-emerald-600/15 text-emerald-400 hover:bg-emerald-600/25 border border-emerald-500/20 flex items-center justify-center gap-1.5 ${canReviewSend ? "px-3" : "flex-1"}`}
@@ -2420,7 +2481,7 @@ function SubGroupHeader({ status, count }: { status: AutoStatus; count: number }
 
 // ── Section ───────────────────────────────────────────────────────────────────
 
-const SUB_GROUP_ORDER: AutoStatus[] = ["needs_review", "queued", "sent", "paused"]
+const SUB_GROUP_ORDER: AutoStatus[] = ["needs_review", "your_move", "queued", "active", "paused"]
 
 function buildSectionSummary(
   total: number,
@@ -2475,8 +2536,20 @@ function Section({
       )
     : 0
 
+  // Build a set of tenant IDs currently queued in a pending batch approval link.
+  // These tenants show "Your Move" — PM received an SMS link and hasn't acted yet.
+  const tenantInApprovalBatch = new Set<string>()
+  for (const a of recentActivity) {
+    if (a.type === "pm_batch_approval_pending" && a.status === "pending") {
+      const items = (a.snapshot as { items?: { tenantId: string; status: string }[] } | null)?.items ?? []
+      for (const item of items) {
+        if (item.status === "pending") tenantInApprovalBatch.add(item.tenantId)
+      }
+    }
+  }
+
   const withStatus = tenants.map(t => {
-    const autoStatus = getAutoStatus(t, recentActivity, pausedTenants, autoMode)
+    const autoStatus = getAutoStatus(t, recentActivity, pausedTenants, autoMode, tenantInApprovalBatch)
     return {
       t,
       autoStatus,
@@ -2492,7 +2565,7 @@ function Section({
   const hasMultipleStatuses = statusGroups.length > 1
   const needsReviewCount = withStatus.filter(x => x.autoStatus === "needs_review").length
   const queuedCount      = withStatus.filter(x => x.autoStatus === "queued").length
-  const sentCount        = withStatus.filter(x => x.autoStatus === "sent").length
+  const sentCount        = withStatus.filter(x => x.autoStatus === "active" || x.autoStatus === "your_move").length
 
   const summaryText = buildSectionSummary(
     tenants.length,
@@ -2646,9 +2719,20 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
     filtered = [...filtered].sort((a, b) => TIER_ORDER_MAP[a.tier] - TIER_ORDER_MAP[b.tier])
   }
 
+  // Build batch approval set for TenantBoard-level status map (same logic as Section)
+  const tenantInApprovalBatch = new Set<string>()
+  for (const a of recentActivity) {
+    if (a.type === "pm_batch_approval_pending" && a.status === "pending") {
+      const items = (a.snapshot as { items?: { tenantId: string; status: string }[] } | null)?.items ?? []
+      for (const item of items) {
+        if (item.status === "pending") tenantInApprovalBatch.add(item.tenantId)
+      }
+    }
+  }
+
   // Compute auto status for every tenant
   const autoStatusMap = new Map<string, AutoStatus>(
-    filtered.map(t => [t.id, getAutoStatus(t, recentActivity, pausedTenants, autoMode)])
+    filtered.map(t => [t.id, getAutoStatus(t, recentActivity, pausedTenants, autoMode, tenantInApprovalBatch)])
   )
 
   // Filter counts (always computed on full filtered set, not view-filtered)
@@ -2657,7 +2741,8 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
     all:          filtered.filter(t => t.tier !== "healthy" && autoStatusMap.get(t.id) !== "paused").length,
     needs_review: filtered.filter(t => autoStatusMap.get(t.id) === "needs_review").length,
     queued:       filtered.filter(t => autoStatusMap.get(t.id) === "queued").length,
-    sent:         filtered.filter(t => autoStatusMap.get(t.id) === "sent").length,
+    active:       filtered.filter(t => autoStatusMap.get(t.id) === "active").length,
+    your_move:    filtered.filter(t => autoStatusMap.get(t.id) === "your_move").length,
     paused:       filtered.filter(t => autoStatusMap.get(t.id) === "paused").length,
     healthy:      filtered.filter(t => t.tier === "healthy").length,
   }
@@ -2668,12 +2753,12 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
   const portfolioStats: PortfolioStats = {
     needsReview: counts.needs_review,
     queued: counts.queued,
-    sent: counts.sent,
+    sent: counts.active + counts.your_move,
     paused: counts.paused,
     revenueProtected: filtered
       .filter(t => {
         const s = autoStatusMap.get(t.id)
-        return s === "queued" || s === "sent"
+        return s === "queued" || s === "active" || s === "your_move"
       })
       .reduce((sum, t) => sum + (t.rent_amount ?? 0), 0),
     recoveredThisMonth,
@@ -2696,7 +2781,8 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
     all:          "No active automation issues in your portfolio.",
     needs_review: "Nothing currently requires manual review. The system is handling everything.",
     queued:       "No tenants are currently scheduled for automated actions.",
-    sent:         "No automated messages sent yet this month.",
+    active:       "No automated messages sent yet this month.",
+    your_move:    "No follow-up approvals pending. Check back after the next automation run.",
     paused:       "No tenant automations are paused.",
     healthy:      "No healthy tenants match your filters.",
   }
@@ -2718,8 +2804,9 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
           <p className="text-[#6b7280] text-sm mt-0.5">
             {filtered.length} active ·{" "}
             {counts.needs_review > 0 && <span className="text-red-400">{counts.needs_review} need review · </span>}
+            {counts.your_move > 0 && <span className="text-amber-400">{counts.your_move} approve send · </span>}
             {counts.queued > 0 && <span className="text-blue-400">{counts.queued} scheduled · </span>}
-            {counts.sent > 0 && <span className="text-emerald-400">{counts.sent} sent · </span>}
+            {counts.active > 0 && <span className="text-emerald-400">{counts.active} active · </span>}
             <span className="text-emerald-400">{healthy.length} healthy</span>
           </p>
         </div>
@@ -2881,7 +2968,7 @@ export default function TenantBoard({ tenants, properties, recentActivity, payme
           ))}
 
           {/* Healthy summary row */}
-          {healthy.length > 0 && (activeFilter === "all" || activeFilter === "sent" || activeFilter === "paused") && (
+          {healthy.length > 0 && (activeFilter === "all" || activeFilter === "active" || activeFilter === "paused") && (
             <div className="flex items-center justify-between mt-2 px-1 py-4 border-t border-[#27272a]">
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />

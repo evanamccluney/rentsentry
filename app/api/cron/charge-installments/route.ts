@@ -6,8 +6,9 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!)
 const FEE_RATE = 0.005
 
 export async function GET(req: NextRequest) {
-  const secret = req.headers.get("x-cron-secret") ?? req.nextUrl.searchParams.get("secret")
-  if (secret !== process.env.CRON_SECRET) {
+  const authHeader = req.headers.get("authorization")
+  const querySecret = req.nextUrl.searchParams.get("secret")
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}` && querySecret !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
@@ -85,7 +86,7 @@ export async function GET(req: NextRequest) {
       const totalCents = amountCents + feeCents
 
       try {
-        await stripe.paymentIntents.create({
+        const pi = await stripe.paymentIntents.create({
           amount: totalCents,
           currency: "usd",
           customer: tenant.stripe_customer_id,
@@ -103,6 +104,40 @@ export async function GET(req: NextRequest) {
             is_autopay: "true",
           },
         })
+
+        if (pi.status === "succeeded") {
+          const amountPaid = inst.amount
+          const { data: freshTenant } = await supabase
+            .from("tenants").select("balance_due").eq("id", tenant.id).single()
+          await supabase.from("tenants").update({
+            balance_due: Math.max(0, (freshTenant?.balance_due ?? 0) - amountPaid),
+            last_payment_date: today,
+            updated_at: new Date().toISOString(),
+          }).eq("id", tenant.id)
+
+          await supabase.from("payments").insert({
+            tenant_id: tenant.id,
+            user_id: plan.user_id,
+            amount: amountPaid,
+            date: today,
+            source: "stripe_connect",
+            note: `installment:${inst.index}`,
+          })
+
+          await supabase.from("interventions").insert({
+            tenant_id: tenant.id,
+            user_id: plan.user_id,
+            type: "payment_link_paid",
+            status: "sent",
+            sent_at: new Date().toISOString(),
+            snapshot: {
+              amount_paid: amountPaid,
+              source: "stripe_autopay",
+              installment_index: inst.index,
+              stripe_payment_intent_id: pi.id,
+            },
+          })
+        }
 
         results.charged++
       } catch {

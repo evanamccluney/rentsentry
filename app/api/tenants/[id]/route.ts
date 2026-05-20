@@ -67,7 +67,7 @@ export async function PATCH(
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  revalidateTag(`tenant-data-${user.id}`)
+  revalidateTag(`tenant-data-${user.id}`, "max")
 
   return NextResponse.json({ ok: true, balance_due: saved?.balance_due ?? null })
 }

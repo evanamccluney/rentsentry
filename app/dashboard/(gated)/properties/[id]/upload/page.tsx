@@ -37,8 +37,10 @@ export default function PropertyUploadPage() {
   const [mapping, setMapping] = useState<Record<string, string | null>>({})
   const [preview, setPreview] = useState<(MappedTenant & { risk_score: string; risk_reasons: string[] })[]>([])
   const [importedCount, setImportedCount] = useState(0)
+  const [currentFilename, setCurrentFilename] = useState<string | null>(null)
 
   const handleFile = useCallback((file: File) => {
+    setCurrentFilename(file.name)
     const reader = new FileReader()
     reader.onload = (e) => {
       const text = e.target?.result as string
@@ -128,6 +130,14 @@ export default function PropertyUploadPage() {
     }
 
     await supabase.from("properties").update({ total_units: inserted }).eq("id", propertyId)
+
+    await supabase.from("csv_uploads").insert({
+      property_id: propertyId,
+      user_id: user.id,
+      filename: currentFilename || "rent-roll.csv",
+      rows_imported: inserted,
+      status: "complete",
+    })
 
     setImportedCount(inserted)
     toast.success(`${inserted} tenants imported successfully.`)

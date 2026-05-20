@@ -12,10 +12,12 @@
  */
 
 import { NextRequest, NextResponse } from "next/server"
-import { createClient } from "@supabase/supabase-js"
+import { createClient, type SupabaseClient } from "@supabase/supabase-js"
 import { Resend } from "resend"
 import { sendTenantSms } from "@/lib/sms"
 import { normalizePhone } from "@/lib/phone"
+import { classifyTenantProfile, getPersonalizedPreDueTrigger } from "@/lib/tenant-profiles"
+import { phase1ProactiveReminderSms } from "@/lib/sms-templates"
 
 import { RESEND_FROM } from "@/lib/resend-from"
 
@@ -45,7 +47,7 @@ function cardExpiresWithinDays(expiry: string, days: number): boolean {
 }
 
 async function alreadySentThisMonth(
-  supabase: any,
+  supabase: SupabaseClient,
   tenantId: string,
   type: string
 ): Promise<boolean> {
@@ -61,8 +63,26 @@ async function alreadySentThisMonth(
   return (data?.length ?? 0) > 0
 }
 
+// Returns true if automation already contacted this tenant this month (any type).
+// Phase 1 defers entirely — one owner per tenant per billing cycle.
+async function automationAlreadyActive(
+  supabase: SupabaseClient,
+  tenantId: string
+): Promise<boolean> {
+  const now = new Date()
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+  const { data } = await supabase
+    .from("interventions")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .in("status", ["sent", "dry_run"])
+    .gte("sent_at", monthStart)
+    .limit(1)
+  return (data?.length ?? 0) > 0
+}
+
 async function sendAndLog(
-  supabase: any,
+  supabase: SupabaseClient,
   tenant: { id: string; user_id: string; name: string; email: string | null; phone?: string | null },
   type: string,
   subject: string,
@@ -109,8 +129,9 @@ async function sendAndLog(
 // ── Main handler ───────────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
-  const secret = req.headers.get("x-cron-secret") ?? req.nextUrl.searchParams.get("secret")
-  if (secret !== process.env.CRON_SECRET) {
+  const authHeader = req.headers.get("authorization")
+  const querySecret = req.nextUrl.searchParams.get("secret")
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}` && querySecret !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
@@ -125,13 +146,14 @@ export async function GET(req: NextRequest) {
     no_payment_method: 0,
     proactive_reminder: 0,
     skipped_already_sent: 0,
+    skipped_automation_active: 0,
     errors: 0,
   }
 
   // Fetch all active tenants with the fields we need
   const { data: tenants, error } = await supabase
     .from("tenants")
-    .select("id, name, email, phone, user_id, card_expiry, payment_method, days_late_avg, late_payment_count, rent_amount, rent_due_day")
+    .select("id, name, email, phone, user_id, card_expiry, payment_method, days_late_avg, late_payment_count, previous_delinquency, balance_due, rent_amount, rent_due_day")
     .eq("status", "active")
 
   if (error || !tenants) {
@@ -141,6 +163,13 @@ export async function GET(req: NextRequest) {
   for (const t of tenants) {
     const days = daysUntilNextDue(t.rent_due_day ?? 1)
     const firstName = t.name.split(" ")[0]
+
+    // Skip entirely if automation already contacted this tenant this month.
+    // Prevents overlapping texts when a payment plan or balance reminder is in flight.
+    if (await automationAlreadyActive(supabase, t.id)) {
+      results.skipped_automation_active++
+      continue
+    }
 
     // ── 14 days out: card expiring within 30 days (early warning) ───────────
     if (days === 14 && t.card_expiry && cardExpiresWithinDays(t.card_expiry, 30) && !cardExpiresWithinDays(t.card_expiry, 7)) {
@@ -155,7 +184,8 @@ export async function GET(req: NextRequest) {
           "Phase 1 — 14 days out, card expiring within 30 days",
           `Hi ${firstName}, your payment card on file expires soon. Update it before rent is due to avoid issues. Reply STOP to opt out.`
         )
-        sent ? results.card_expiry_30++ : results.errors++
+        if (sent) results.card_expiry_30++
+        else results.errors++
       }
     }
 
@@ -173,7 +203,8 @@ export async function GET(req: NextRequest) {
             "Phase 1 — 7 days out, card expiring within 7 days",
             `Hi ${firstName}, urgent — your payment card expires in 7 days and rent is due soon. Update it today. Reply STOP to opt out.`
           )
-          sent ? results.card_expiry_7++ : results.errors++
+          if (sent) results.card_expiry_7++
+          else results.errors++
         }
       }
 
@@ -190,27 +221,54 @@ export async function GET(req: NextRequest) {
             "Phase 1 — 7 days out, no payment method on file",
             `Hi ${firstName}, no payment method is on file and rent is due in 7 days. Reply to this message for help. Reply STOP to opt out.`
           )
-          sent ? results.no_payment_method++ : results.errors++
+          if (sent) results.no_payment_method++
+          else results.errors++
         }
       }
     }
 
-    // ── 3 days out: proactive reminder for tenants with late history ─────────
-    if (days === 3) {
-      const hasHistory = (t.late_payment_count ?? 0) >= 2 || (t.days_late_avg ?? 0) >= 3
-      if (hasHistory) {
+    // ── Proactive reminder for tenants with late history (personalized timing) ──
+    // Timing profile: fires based on tenant's avg payment pattern (days_late_avg + 3)
+    //   so the reminder lands before their typical payment window, not a fixed 3 days.
+    // Chronic/repeat: always fires at 3 days (compressed cadence is intentional).
+    // Stable: fires at 7 days (more leadtime for first-timer, but rarely triggers since
+    //   stable tenants won't have the late history that enables this rule).
+    const hasHistory = (t.late_payment_count ?? 0) >= 2 || (t.days_late_avg ?? 0) >= 3
+    if (hasHistory) {
+      const tenantProf = classifyTenantProfile(
+        t.days_late_avg ?? 0,
+        t.late_payment_count ?? 0,
+        t.previous_delinquency ?? false,
+        t.balance_due ?? 0,
+        t.rent_amount ?? 0,
+      )
+      const triggerDay = getPersonalizedPreDueTrigger(tenantProf, t.days_late_avg ?? 0)
+      if (days === triggerDay) {
         if (await alreadySentThisMonth(supabase, t.id, "proactive_reminder")) {
           results.skipped_already_sent++
         } else {
+          const smsBody = phase1ProactiveReminderSms(tenantProf, firstName, t.rent_amount ?? 0, days)
+          const profileLabel = tenantProf === 'timing' ? `timing (trigger: ${triggerDay}d)` : tenantProf
+          const emailSubject = tenantProf === 'chronic' || tenantProf === 'repeat'
+            ? `Rent is due in ${days} days — don't miss it`
+            : `Friendly reminder — rent is due in ${days} days`
+          const emailBody = tenantProf === 'distress'
+            ? `Hi ${firstName},<br><br>Rent is due in ${days} days. If you're going through a difficult period, please reach out as soon as possible — flexible payment options are available.`
+            : tenantProf === 'chronic' || tenantProf === 'repeat'
+            ? `Hi ${firstName},<br><br>Rent is due in ${days} days. Based on your payment history, we're reaching out early. Please ensure payment is ready on time to avoid a late fee.`
+            : tenantProf === 'timing'
+            ? `Hi ${firstName},<br><br>Rent is due in ${days} days. We're reaching out a little early this month — if your pay cycle runs close to the due date, now's a good time to plan ahead.`
+            : `Hi ${firstName},<br><br>Just a friendly heads up that rent is due in ${days} days. If you're expecting any difficulty this month, please reach out as soon as possible — flexible options may be available.`
           const sent = await sendAndLog(
             supabase, t,
             "proactive_reminder",
-            "Friendly reminder — rent is due in 3 days",
-            `Hi ${firstName},<br><br>Just a friendly heads up that rent is due in 3 days. If you're expecting any difficulty this month, please reach out as soon as possible — flexible options may be available.`,
-            "Phase 1 — 3 days out, tenant has late payment history",
-            `Hi ${firstName}, rent is due in 3 days. Reply to this message if you expect any issues this month — options are available. Reply STOP to opt out.`
+            emailSubject,
+            emailBody,
+            `Phase 1 — ${days}d out, profile: ${profileLabel}`,
+            smsBody,
           )
-          sent ? results.proactive_reminder++ : results.errors++
+          if (sent) results.proactive_reminder++
+          else results.errors++
         }
       }
     }
@@ -255,7 +313,16 @@ export async function GET(req: NextRequest) {
 
   for (const userId of allUserIds) {
     try {
-      // Find the most recently created tenant for this user
+      const { data: latestUpload } = await supabase
+        .from("csv_uploads")
+        .select("created_at")
+        .eq("user_id", userId)
+        .eq("status", "complete")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      // Fall back to tenant creation date for accounts imported before upload history existed.
       const { data: latestTenant } = await supabase
         .from("tenants")
         .select("created_at")
@@ -263,10 +330,11 @@ export async function GET(req: NextRequest) {
         .eq("status", "active")
         .order("created_at", { ascending: false })
         .limit(1)
-        .single()
+        .maybeSingle()
 
-      if (!latestTenant) continue
-      if (latestTenant.created_at > sevenDaysAgo) continue  // fresh data, skip
+      const freshnessDate = latestUpload?.created_at ?? latestTenant?.created_at
+      if (!freshnessDate) continue
+      if (freshnessDate > sevenDaysAgo) continue  // fresh data, skip
 
       // Check we haven't already sent a stale nudge in the last 7 days
       const { data: recentNudge } = await supabase
@@ -283,7 +351,7 @@ export async function GET(req: NextRequest) {
       const pmEmail = userData?.user?.email
       if (!pmEmail) continue
 
-      const daysSince = Math.floor((Date.now() - new Date(latestTenant.created_at).getTime()) / (1000 * 60 * 60 * 24))
+      const daysSince = Math.floor((Date.now() - new Date(freshnessDate).getTime()) / (1000 * 60 * 60 * 24))
 
       await resend.emails.send({
         from: RESEND_FROM,

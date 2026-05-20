@@ -12,8 +12,8 @@ const FEATURES = [
   { label: "Eviction prevention workflow",         desc: "7-tier escalation from reminder to attorney handoff — automated" },
   { label: "Eviction vs Cash for Keys math",       desc: "State-based cost breakdown so you pick the cheaper option" },
   { label: "Attorney handoff emails",              desc: "Pre-filled case summary sent to your attorney automatically" },
-  { label: "Credit reporting opt-in for tenants", desc: "On-time payments reported to Experian & Equifax — incentivizes paying" },
-  { label: "Multilingual tenant support",         desc: "AI detects and responds in the tenant's language automatically" },
+  { label: "Tenant portal and payment history",   desc: "Tenants can view balances, payment plans, and recent payments" },
+  { label: "Delivery failure alerts",             desc: "Failed SMS delivery is logged and can alert the property manager" },
 ]
 
 function trialStatus(createdAt: string) {

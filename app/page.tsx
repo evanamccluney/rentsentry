@@ -192,7 +192,7 @@ export default function HomePage() {
 
               <p className="text-[#9ca3af] text-lg leading-relaxed mb-10 max-w-lg">
                 RentSentry tells you exactly what to do the moment a tenant goes late —
-                automated SMS, state-specific legal notices, and an AI advisor that knows
+                automated SMS, attorney-review-ready notice drafts, and an AI advisor that knows
                 every detail of your tenant's history.
               </p>
 
@@ -334,14 +334,14 @@ export default function HomePage() {
               </div>
               <h3 className="font-heading text-2xl font-bold tracking-tight mb-3">State-specific Pay or Quit in one click</h3>
               <p className="text-[#9ca3af] leading-relaxed mb-5">
-                All 50 states. The right notice, the right timeline, the right legal citation.
-                Enter your name, download the PDF. Most tenants pay within 7 days of receiving it.
+                Generate a state-aware draft with tenant details, balance, and service notes.
+                Verify local requirements with counsel before serving.
               </p>
               <ul className="space-y-2.5">
                 {[
-                  "All 50 states + DC with correct legal citations",
-                  "Auto-fills tenant name, unit, balance, deadline",
-                  "Professionally formatted, court-admissible PDF",
+                  "State-aware draft templates for review",
+                  "Auto-fills tenant name, unit, balance, and deadline",
+                  "Formatted PDF drafts with legal-review disclaimers",
                 ].map(item => (
                   <li key={item} className="flex items-center gap-2.5 text-sm text-[#d1d5db]">
                     <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
@@ -473,8 +473,8 @@ export default function HomePage() {
                     "Pay or Quit notice generator",
                     "Payment plan negotiation",
                     "Attorney handoff emails",
-                    "Credit reporting for tenants",
-                    "Multilingual tenant support",
+                    "Tenant portal and payment links",
+                    "Delivery failure alerts",
                   ].map(f => (
                     <div key={f} className="flex items-center gap-2 text-xs text-[#d1d5db]">
                       <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />

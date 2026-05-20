@@ -70,7 +70,7 @@ export default async function DashboardPage() {
     "pre_due_delinquent_warning", "pre_due_installment_offer", "payment_method_alert",
   ]
 
-  const [rawTenants, profile, recentActivity, { count: propertyCount }, { data: recentAutoInterventions }] = await Promise.all([
+  const [rawTenants, profile, recentActivity, { count: propertyCount }, { data: recentAutoInterventions }, { data: latestUpload }] = await Promise.all([
     getCachedTenants(user!.id),
     getCachedProfile(user!.id),
     supabase
@@ -91,6 +91,14 @@ export default async function DashboardPage() {
       .in("type", AUTO_INTERVENTION_TYPES)
       .gte("sent_at", new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString())
       .order("sent_at", { ascending: false }),
+    supabase
+      .from("csv_uploads")
+      .select("created_at, filename, rows_imported")
+      .eq("user_id", user!.id)
+      .eq("status", "complete")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
   ])
 
   const lastAutoActionByTenant: Record<string, { type: string; daysAgo: number }> = {}
@@ -119,9 +127,10 @@ export default async function DashboardPage() {
     }),
   }))
 
-  const lastUploadAt = rawTenants && rawTenants.length > 0
+  const latestTenantCreatedAt = rawTenants && rawTenants.length > 0
     ? new Date(Math.max(...rawTenants.map(t => new Date((t as { created_at?: string }).created_at ?? "").getTime())))
     : null
+  const lastUploadAt = latestUpload?.created_at ? new Date(latestUpload.created_at) : latestTenantCreatedAt
   const renderedAt = new Date()
   const daysSinceUpload = lastUploadAt
     ? Math.floor((renderedAt.getTime() - lastUploadAt.getTime()) / (1000 * 60 * 60 * 24))

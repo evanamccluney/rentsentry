@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
     ? new Date(target.user_metadata.trial_ends_at)
     : new Date(new Date(target.created_at).getTime() + 30 * 24 * 60 * 60 * 1000)
 
-  let newMetadata: Record<string, unknown> = { ...target.user_metadata }
+  const newMetadata: Record<string, unknown> = { ...target.user_metadata }
 
   if (action === "add_days") {
     const base = currentEndsAt > new Date() ? currentEndsAt : new Date()

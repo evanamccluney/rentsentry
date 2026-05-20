@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server"
 import ImportWizard from "@/components/dashboard/ImportWizard"
+import type { Platform, TenantImportRow } from "@/lib/import-mappers"
 
 export default async function ImportPage() {
   const supabase = await createClient()
@@ -11,6 +12,12 @@ export default async function ImportPage() {
     .eq("user_id", user!.id)
     .order("name")
 
+  const { data: importProfile } = await supabase
+    .from("import_profiles")
+    .select("platform, column_mapping, property_id")
+    .eq("user_id", user!.id)
+    .maybeSingle()
+
   return (
     <div className="max-w-2xl">
       <div className="mb-8">
@@ -19,7 +26,14 @@ export default async function ImportPage() {
           Bring in your existing tenants from Yardi, AppFolio, Buildium, Rent Manager, or a spreadsheet.
         </p>
       </div>
-      <ImportWizard properties={properties ?? []} />
+      <ImportWizard
+        properties={properties ?? []}
+        savedImportProfile={importProfile as {
+          platform: Platform | null
+          column_mapping: Record<string, keyof TenantImportRow> | null
+          property_id?: string | null
+        } | null}
+      />
     </div>
   )
 }

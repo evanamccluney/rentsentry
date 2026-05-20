@@ -1,10 +1,12 @@
 "use client"
 import { useState, useRef } from "react"
+import Link from "next/link"
 import { Upload, CheckCircle2, AlertTriangle, Download, ChevronRight, X, ArrowLeft, RefreshCw } from "lucide-react"
 import {
   PLATFORM_CONFIGS, parseCSV, detectColumnMapping, convertRow, generateTemplateCSV,
   type Platform, type TenantImportRow, type ParseError,
 } from "@/lib/import-mappers"
+import { applySavedImportMapping, type SavedImportProfile } from "@/lib/import-profile"
 
 interface Property { id: string; name: string }
 
@@ -108,7 +110,13 @@ function ParseErrorCard({
 
 // ── Main wizard ───────────────────────────────────────────────────────────────
 
-export default function ImportWizard({ properties }: { properties: Property[] }) {
+export default function ImportWizard({
+  properties,
+  savedImportProfile,
+}: {
+  properties: Property[]
+  savedImportProfile?: SavedImportProfile | null
+}) {
   const [step, setStep] = useState<1 | 2 | 3>(1)
   const [platform, setPlatform] = useState<Platform | null>(null)
   const [parsedRows, setParsedRows] = useState<TenantImportRow[]>([])
@@ -121,6 +129,8 @@ export default function ImportWizard({ properties }: { properties: Property[] })
   const [parseError, setParseError] = useState<ParseError | null>(null)
   const [noMappedColumns, setNoMappedColumns] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  const [usedSavedMapping, setUsedSavedMapping] = useState(false)
+  const [currentFilename, setCurrentFilename] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   function resetUpload() {
@@ -128,6 +138,8 @@ export default function ImportWizard({ properties }: { properties: Property[] })
     setNoMappedColumns(false)
     setParsedRows([])
     setHeaders([])
+    setUsedSavedMapping(false)
+    setCurrentFilename(null)
     setImportError(null)
     if (fileRef.current) fileRef.current.value = ""
   }
@@ -140,6 +152,7 @@ export default function ImportWizard({ properties }: { properties: Property[] })
   function handleFile(file: File) {
     if (!platform) return
     resetUpload()
+    setCurrentFilename(file.name)
 
     if (file.name.endsWith(".xlsx") || file.name.endsWith(".xls")) {
       setParseError({ code: "xlsx_not_supported" })
@@ -159,7 +172,13 @@ export default function ImportWizard({ properties }: { properties: Property[] })
       }
 
       const { headers: h, rows: rawRows } = result
-      const mapping = detectColumnMapping(h, platform)
+      const detectedMapping = detectColumnMapping(h, platform)
+      const { mapping, usedSavedMapping } = applySavedImportMapping(
+        detectedMapping,
+        h,
+        platform,
+        savedImportProfile
+      )
       const mappedFields = new Set(Object.values(mapping))
 
       if (!mappedFields.has("name") && !mappedFields.has("unit")) {
@@ -173,6 +192,10 @@ export default function ImportWizard({ properties }: { properties: Property[] })
       setHeaders(h)
       setColumnMapping(mapping)
       setParsedRows(converted)
+      setUsedSavedMapping(usedSavedMapping)
+      if (usedSavedMapping && savedImportProfile?.property_id) {
+        setPropertyId(savedImportProfile.property_id)
+      }
       setStep(3)
     }
     reader.readAsText(file)
@@ -203,7 +226,13 @@ export default function ImportWizard({ properties }: { properties: Property[] })
       const res = await fetch("/api/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows: parsedRows, propertyId: propertyId || null }),
+        body: JSON.stringify({
+          rows: parsedRows,
+          propertyId: propertyId || null,
+          platform,
+          columnMapping,
+          filename: currentFilename,
+        }),
       })
       const data = await res.json()
       if (data.ok) setImported(data.imported)
@@ -244,9 +273,9 @@ export default function ImportWizard({ properties }: { properties: Property[] })
           RentSentry has scored each tenant and assigned their risk tier.
         </p>
         <div className="flex gap-3 justify-center">
-          <a href="/dashboard/tenants" className="px-5 py-2.5 rounded-xl bg-[#60a5fa] text-black text-sm font-semibold hover:bg-[#3b82f6] transition-colors">
+          <Link href="/dashboard/tenants" className="px-5 py-2.5 rounded-xl bg-[#60a5fa] text-black text-sm font-semibold hover:bg-[#3b82f6] transition-colors">
             View Tenants
-          </a>
+          </Link>
           <button
             onClick={() => { setImported(null); setStep(1); setPlatform(null); resetUpload() }}
             className="px-5 py-2.5 rounded-xl bg-white/5 text-[#9ca3af] text-sm font-semibold hover:bg-white/10 transition-colors border border-white/10"
@@ -555,6 +584,11 @@ export default function ImportWizard({ properties }: { properties: Property[] })
                     </div>
                   ))}
                 </div>
+                {usedSavedMapping && (
+                  <div className="mt-3 rounded-xl border border-emerald-500/15 bg-emerald-500/8 px-3 py-2 text-xs text-emerald-400">
+                    Using your saved {cfg.name} column mapping. Adjust anything that changed before importing.
+                  </div>
+                )}
               </div>
 
               {/* Property selector */}

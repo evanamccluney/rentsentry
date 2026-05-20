@@ -43,7 +43,7 @@
  *   OFF → evaluate only, log as "dry_run"
  *
  * Secure: requires CRON_SECRET header or ?secret= param.
- * Schedule: run daily at 10am UTC via Vercel Cron (vercel.json: "0 10 * * *").
+ * Schedule: run daily at 12pm ET / 16:00 UTC via Vercel Cron (vercel.json: "0 16 * * *").
  */
 
 import { NextRequest, NextResponse } from "next/server"
@@ -54,6 +54,16 @@ import { sendTenantEmail } from "@/lib/email"
 import { profileToEscalationRules, type EscalationRules } from "@/lib/escalation-rules"
 import { generateShortCode } from "@/lib/short-link"
 import { normalizePhone } from "@/lib/phone"
+import { classifyTenantProfile, PROFILE_CONFIGS } from "@/lib/tenant-profiles"
+import {
+  splitPayOfferSms,
+  balanceReminderSms,
+  planFollowupSms,
+  planEscalationSms,
+  proactiveReminderSms,
+  preDueUrgentSms,
+  preDueDelinquentWarningSms,
+} from "@/lib/sms-templates"
 
 const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
 const FROM_NUMBER = process.env.TWILIO_PHONE_NUMBER!
@@ -87,13 +97,14 @@ async function recentlySent(
   withinDays: number
 ): Promise<boolean> {
   const since = new Date(Date.now() - withinDays * 24 * 60 * 60 * 1000).toISOString()
-  const { data } = await supabase
+  let query = supabase
     .from("interventions")
     .select("id")
     .eq("tenant_id", tenantId)
-    .eq("type", type)
+    .in("status", ["sent", "dry_run"])
     .gte("sent_at", since)
-    .limit(1)
+  if (type) query = query.eq("type", type)
+  const { data } = await query.limit(1)
   return (data?.length ?? 0) > 0
 }
 
@@ -148,8 +159,11 @@ async function sendAndLog(
 // ── Main handler ───────────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
-  const secret = req.headers.get("x-cron-secret") ?? req.nextUrl.searchParams.get("secret")
-  if (secret !== process.env.CRON_SECRET) {
+  const authHeader = req.headers.get("authorization")
+  const querySecret = req.nextUrl.searchParams.get("secret")
+  const isVercelCron = authHeader === `Bearer ${process.env.CRON_SECRET}`
+  const isManualTrigger = querySecret === process.env.CRON_SECRET
+  if (!isVercelCron && !isManualTrigger) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
@@ -197,6 +211,103 @@ export async function GET(req: NextRequest) {
         .update({ status: fired ? "sent" : "failed" })
         .eq("id", item.id)
     }
+  }
+
+  // ── Fire AI-scheduled split-pay offers ────────────────────────────────────────
+  const { data: scheduledOffers } = await supabase
+    .from("interventions")
+    .select("id, tenant_id, user_id, snapshot")
+    .eq("type", "scheduled_split_pay_offer")
+    .eq("status", "pending")
+    .lte("snapshot->>scheduled_for", now.toISOString())
+
+  for (const item of scheduledOffers ?? []) {
+    const { data: tenant } = await supabase
+      .from("tenants")
+      .select("name, phone, balance_due, rent_amount, rent_due_day, sms_opted_out")
+      .eq("id", item.tenant_id)
+      .single()
+
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("pm_display_name, pm_phone, pm_alerts_enabled, pm_alert_triggers")
+      .eq("id", item.user_id)
+      .single()
+
+    if (!tenant || (tenant.balance_due ?? 0) <= 0) {
+      await supabase.from("interventions").update({ status: "failed" }).eq("id", item.id)
+      continue
+    }
+
+    const balance = tenant.balance_due as number
+    const rentAmount = (tenant.rent_amount ?? 0) as number
+    const rentDueDay = (tenant.rent_due_day ?? 1) as number
+    const dayOfMonth = now.getDate()
+    const daysUntilDue = daysUntilDueDate(rentDueDay)
+    const includesNextMonth = dayOfMonth >= 15 && daysUntilDue <= 20 && rentAmount > 0 && balance >= rentAmount * 0.8
+    const totalAmount = includesNextMonth ? Math.round((balance + rentAmount) * 100) / 100 : balance
+    const monthsOwed = rentAmount > 0 ? balance / rentAmount : 1
+    const maxInstallments = includesNextMonth ? 6 : monthsOwed >= 1.5 ? 4 : monthsOwed >= 1 ? 3 : 2
+
+    const token = generateShortCode()
+    const expiresAt = new Date(Date.now() + 7 * 86_400_000).toISOString()
+
+    await supabase.from("interventions").insert({
+      tenant_id: item.tenant_id,
+      user_id: item.user_id,
+      type: "split_pay_offer",
+      status: "sent",
+      sent_at: now.toISOString(),
+      notes: "Scheduled via AI assistant",
+      snapshot: {
+        offer_token: token,
+        total_amount: totalAmount,
+        balance_due: balance,
+        rent_amount: rentAmount,
+        max_installments: maxInstallments,
+        min_installments: 2,
+        includes_next_month: includesNextMonth,
+        rent_due_day: rentDueDay,
+        expires_at: expiresAt,
+      },
+    })
+
+    const offerUrl = `${process.env.NEXT_PUBLIC_APP_URL}/pay/offer/${token}`
+    const pmName = profile?.pm_display_name?.trim() || null
+    const from = pmName ? `your property manager ${pmName.split(" ")[0]}` : "your property manager"
+    const firstName = (tenant.name as string).split(" ")[0]
+    const smsBody = includesNextMonth
+      ? `Hi ${firstName}, ${from} is offering to split your $${totalAmount.toLocaleString()} balance (past due + upcoming rent) into up to ${maxInstallments} payments. Choose your plan: ${offerUrl} Reply STOP to opt out.`
+      : `Hi ${firstName}, ${from} is offering to split your $${totalAmount.toLocaleString()} past-due balance into installments. Choose your plan: ${offerUrl} Reply STOP to opt out.`
+
+    let fired = false
+    if (!tenant.sms_opted_out && tenant.phone) {
+      const phone = normalizePhone(tenant.phone)
+      if (phone) {
+        try {
+          await twilioClient.messages.create({ from: FROM_NUMBER, to: phone, body: smsBody })
+          fired = true
+        } catch (e) { console.error("cron: scheduled_split_pay_offer sms failed:", e) }
+      }
+    }
+
+    const pmTriggers: string[] = Array.isArray(profile?.pm_alert_triggers)
+      ? profile.pm_alert_triggers
+      : ["plan_sent"]
+    if (profile?.pm_alerts_enabled && pmTriggers.includes("plan_sent") && profile?.pm_phone) {
+      const pmPhone = normalizePhone(profile.pm_phone)
+      if (pmPhone) {
+        try {
+          await twilioClient.messages.create({
+            from: FROM_NUMBER,
+            to: pmPhone,
+            body: `RentSentry: Payment plan offer sent to ${firstName} — $${totalAmount.toLocaleString()} in up to ${maxInstallments} installments${includesNextMonth ? " (incl. next month)" : ""}. View dashboard: ${process.env.NEXT_PUBLIC_APP_URL}/dashboard/tenants`,
+          })
+        } catch {}
+      }
+    }
+
+    await supabase.from("interventions").update({ status: fired ? "sent" : "failed" }).eq("id", item.id)
   }
 
   const { data: tenants, error } = await supabase
@@ -258,8 +369,12 @@ export async function GET(req: NextRequest) {
     skipped_dedup: 0,
     skipped_no_trigger: 0,
     skipped_awaiting_pm: 0,
+    skipped_plan_limit: 0,
     installment_reminders: 0,
     installment_offers: 0,
+    followups: 0,
+    escalations: 0,
+    batch_approvals_sent: 0,
     errors: 0,
   }
 
@@ -284,6 +399,41 @@ export async function GET(req: NextRequest) {
   // Pre-fetch payment plan data for Rule F
   const today = new Date().toISOString().split("T")[0]
   const tenantIds = tenants.map((t: { id: string }) => t.id)
+  const fourteenDaysAgo = new Date(Date.now() - 14 * 86_400_000).toISOString()
+
+  // Pre-fetch recent plan offers for follow-up rules (A2/A3)
+  const { data: recentOfferRows } = await supabase
+    .from("interventions")
+    .select("tenant_id, type, sent_at, snapshot")
+    .in("tenant_id", tenantIds)
+    .in("type", ["split_pay_offer", "current_balance_reminder"])
+    .in("status", ["sent", "dry_run"])
+    .gte("sent_at", fourteenDaysAgo)
+    .order("sent_at", { ascending: false })
+
+  const recentOfferByTenant = new Map<string, { type: string; sent_at: string; daysSince: number; offerToken?: string }>()
+  for (const row of recentOfferRows ?? []) {
+    if (!recentOfferByTenant.has(row.tenant_id)) {
+      recentOfferByTenant.set(row.tenant_id, {
+        type: row.type,
+        sent_at: row.sent_at,
+        daysSince: Math.floor((Date.now() - new Date(row.sent_at).getTime()) / 86_400_000),
+        offerToken: (row.snapshot as { offer_token?: string } | null)?.offer_token,
+      })
+    }
+  }
+
+  // Pre-fetch plan agreements in last 14 days (to know if follow-up is moot)
+  const { data: recentAgreements } = await supabase
+    .from("interventions")
+    .select("tenant_id")
+    .in("tenant_id", tenantIds)
+    .eq("type", "payment_plan_agreed")
+    .gte("sent_at", fourteenDaysAgo)
+
+  const planAgreedRecently = new Set<string>(
+    (recentAgreements ?? []).map((a: { tenant_id: string }) => a.tenant_id)
+  )
 
   const { data: allPlans } = await supabase
     .from("interventions")
@@ -299,6 +449,55 @@ export async function GET(req: NextRequest) {
       planByTenant.set(plan.tenant_id, { installments: plan.snapshot.installments })
     }
   }
+
+  // Pre-fetch plan escalation counts per tenant — proxy for "plans ignored/broken".
+  // Used to enforce per-profile plan_max_offers: once a tenant hits the limit,
+  // automation stops offering plans and defers to Phase 2's escalation path.
+  const { data: escalationRows } = await supabase
+    .from("interventions")
+    .select("tenant_id")
+    .in("tenant_id", tenantIds)
+    .eq("type", "plan_escalation")
+    .in("status", ["sent", "dry_run"])
+
+  const escalationCountByTenant = new Map<string, number>()
+  for (const row of escalationRows ?? []) {
+    escalationCountByTenant.set(row.tenant_id, (escalationCountByTenant.get(row.tenant_id) ?? 0) + 1)
+  }
+
+  // Pre-fetch tenants already queued in a pending batch approval (last 24h)
+  // so back-to-back cron runs don't re-queue the same tenant before PM responds.
+  const { data: pendingBatchRows } = await supabase
+    .from("interventions")
+    .select("snapshot")
+    .eq("type", "pm_batch_approval_pending")
+    .eq("status", "pending")
+    .gte("sent_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+
+  const tenantInPendingBatch = new Set<string>()
+  for (const b of pendingBatchRows ?? []) {
+    const items = (b.snapshot as { items?: { tenantId: string }[] } | null)?.items ?? []
+    for (const item of items) {
+      if (item.tenantId) tenantInPendingBatch.add(item.tenantId)
+    }
+  }
+
+  // Collected per-PM approval items — sent as a single batch link after the tenant loop
+  const pendingApprovals = new Map<string, {
+    pmPhone: string
+    items: Array<{
+      index: number
+      tenantId: string
+      tenantName: string
+      balanceDue: number
+      type: 'followup' | 'escalation'
+      offerUrl: string | null
+      offerToken: string | null
+      profile: string
+      daysSince: number
+      status: 'pending'
+    }>
+  }>()
 
   // Fetch all installment payments for tenants with plans
   const planTenantIds = [...planByTenant.keys()]
@@ -365,11 +564,104 @@ export async function GET(req: NextRequest) {
     const hasHistory = (t.late_payment_count ?? 0) >= 2 || (t.days_late_avg ?? 0) >= 3
     const noPaymentMethod = !t.payment_method || t.payment_method === "unknown"
     const hasBalance = (t.balance_due ?? 0) > 0
+    const firstName = t.name.split(" ")[0]
+
+    // Behavioral profile — drives cadence, tone, plan sizing, and dedup window
+    const tenantProfile = classifyTenantProfile(
+      t.days_late_avg ?? 0,
+      t.late_payment_count ?? 0,
+      t.previous_delinquency ?? false,
+      t.balance_due ?? 0,
+      t.rent_amount ?? 0,
+    )
+    const profileCfg = PROFILE_CONFIGS[tenantProfile]
     const pmConfirmPending = awaitingPmConfirm.has(t.id)
     let triggered = false
 
     // Skip snoozed tenants (AI or PM postponed outreach)
     if (t.snoozed_until && new Date(t.snoozed_until) > now) {
+      results.skipped_dedup++
+      continue
+    }
+
+    // ── Rule A2: Day 3 follow-up for unanswered plan offers ─────────────────────
+    // Fires 3-6 days after split_pay_offer/current_balance_reminder with no response.
+    // Must run BEFORE the global dedup so it can fire after the initial offer.
+    // Queues item for batch approval link (sent once per PM after the loop).
+    // Falls back to direct tenant SMS when no PM phone is configured.
+    const recentOffer = recentOfferByTenant.get(t.id)
+    const offerUnanswered = recentOffer && !planAgreedRecently.has(t.id) && hasBalance
+    if (offerUnanswered && recentOffer.daysSince >= 3 && recentOffer.daysSince < 7) {
+      const alreadyFollowedUp = await recentlySent(supabase, t.id, "plan_followup", 7)
+      if (!alreadyFollowedUp && !tenantInPendingBatch.has(t.id)) {
+        const offerUrl = recentOffer.offerToken
+          ? `${process.env.NEXT_PUBLIC_APP_URL}/pay/offer/${recentOffer.offerToken}`
+          : null
+        const pmAlert = pmAlertsByUser.get(t.user_id)
+        const pmPhoneNorm = pmAlert?.phone ? normalizePhone(pmAlert.phone) : null
+
+        if (autoMode && pmPhoneNorm) {
+          if (!pendingApprovals.has(t.user_id)) pendingApprovals.set(t.user_id, { pmPhone: pmPhoneNorm, items: [] })
+          const batch = pendingApprovals.get(t.user_id)!
+          batch.items.push({ index: batch.items.length, tenantId: t.id, tenantName: t.name, balanceDue: t.balance_due ?? 0, type: 'followup', offerUrl, offerToken: recentOffer.offerToken ?? null, profile: tenantProfile, daysSince: recentOffer.daysSince, status: 'pending' })
+          results.evaluated++
+          results.followups++
+        } else if (!autoMode) {
+          results.evaluated++
+          await supabase.from("interventions").insert({ tenant_id: t.id, user_id: t.user_id, type: "plan_followup", status: "dry_run", sent_at: new Date().toISOString(), snapshot: { tier: "payment_plan", balance_due: t.balance_due ?? 0, profile: tenantProfile, triggered_by: "followup_day3" } })
+          results.dry_run++
+          results.followups++
+        } else {
+          results.evaluated++
+          const smsBody = planFollowupSms(tenantProfile, firstName, t.balance_due ?? 0, offerUrl)
+          await sendAndLog(supabase, t, "plan_followup", smsBody, { tier: "payment_plan", balance_due: t.balance_due ?? 0, profile: tenantProfile, triggered_by: "followup_day3" }, autoMode, results)
+          results.followups++
+        }
+      } else {
+        results.skipped_dedup++
+      }
+      continue
+    }
+
+    // ── Rule A3: Day 7 escalation for unanswered plan offers ────────────────────
+    // Fires 7-13 days after offer with no response — more urgent tone, warns of next steps.
+    // Same batch approval flow as A2.
+    if (offerUnanswered && recentOffer.daysSince >= 7) {
+      const alreadyEscalated = await recentlySent(supabase, t.id, "plan_escalation", profileCfg.dedup_days)
+      if (!alreadyEscalated && !tenantInPendingBatch.has(t.id)) {
+        const pmAlert = pmAlertsByUser.get(t.user_id)
+        const pmPhoneNorm = pmAlert?.phone ? normalizePhone(pmAlert.phone) : null
+
+        if (autoMode && pmPhoneNorm) {
+          if (!pendingApprovals.has(t.user_id)) pendingApprovals.set(t.user_id, { pmPhone: pmPhoneNorm, items: [] })
+          const batch = pendingApprovals.get(t.user_id)!
+          batch.items.push({ index: batch.items.length, tenantId: t.id, tenantName: t.name, balanceDue: t.balance_due ?? 0, type: 'escalation', offerUrl: null, offerToken: null, profile: tenantProfile, daysSince: recentOffer.daysSince, status: 'pending' })
+          results.evaluated++
+          results.escalations++
+        } else if (!autoMode) {
+          results.evaluated++
+          await supabase.from("interventions").insert({ tenant_id: t.id, user_id: t.user_id, type: "plan_escalation", status: "dry_run", sent_at: new Date().toISOString(), snapshot: { tier: "payment_plan", balance_due: t.balance_due ?? 0, days_since_offer: recentOffer.daysSince, profile: tenantProfile, triggered_by: "escalation_day7" } })
+          results.dry_run++
+          results.escalations++
+        } else {
+          results.evaluated++
+          const smsBody = planEscalationSms(tenantProfile, firstName, t.balance_due ?? 0, recentOffer.daysSince)
+          await sendAndLog(supabase, t, "plan_escalation", smsBody, { tier: "payment_plan", balance_due: t.balance_due ?? 0, days_since_offer: recentOffer.daysSince, profile: tenantProfile, triggered_by: "escalation_day7" }, autoMode, results)
+          results.escalations++
+        }
+      } else {
+        results.skipped_dedup++
+      }
+      continue
+    }
+
+    // Profile-aware global dedup — window varies by behavioral profile:
+    //   chronic/repeat: 7 days (more frequent contact is warranted)
+    //   timing: 10 days
+    //   stable/distress: 14 days (standard; don't over-contact)
+    // Follow-up rules A2/A3 are exempt — they run before this check.
+    const globalDedup = await recentlySent(supabase, t.id, "", profileCfg.dedup_days)
+    if (globalDedup) {
       results.skipped_dedup++
       continue
     }
@@ -428,8 +720,16 @@ export async function GET(req: NextRequest) {
       const stripeConnected = stripeConnectedByUser.get(t.user_id) ?? false
 
       if (stripeConnected) {
+        // Check if this tenant has hit the plan offer limit for their profile.
+        // If so, stop offering plans — Phase 2's escalation path takes over.
+        const priorEscalations = escalationCountByTenant.get(t.id) ?? 0
+        if (priorEscalations >= profileCfg.plan_max_offers) {
+          results.skipped_plan_limit++
+          continue
+        }
+
         // Real payment plan offer with tenant-facing link
-        const alreadySent = await recentlySent(supabase, t.id, "split_pay_offer", 14)
+        const alreadySent = await recentlySent(supabase, t.id, "split_pay_offer", profileCfg.dedup_days)
         if (alreadySent) {
           results.skipped_dedup++
         } else {
@@ -441,26 +741,31 @@ export async function GET(req: NextRequest) {
           const totalAmount = includesNextMonth
             ? Math.round((balanceDue + rentAmount) * 100) / 100
             : balanceDue
-          const maxInstallments = includesNextMonth ? 6 : (balanceDue >= rentAmount * 1.5 ? 4 : balanceDue >= rentAmount * 0.8 ? 3 : 2)
+          // Cap installments at the profile maximum — chronic/repeat get 2 (shorter window),
+          // timing/stable get 3, distress gets 4 (more flexibility)
+          const baseInstallments = includesNextMonth ? 6 : (balanceDue >= rentAmount * 1.5 ? 4 : balanceDue >= rentAmount * 0.8 ? 3 : 2)
+          const maxInstallments = Math.min(baseInstallments, profileCfg.plan_max_installments)
           const offerToken = generateShortCode()
           const offerUrl = `${process.env.NEXT_PUBLIC_APP_URL}/pay/offer/${offerToken}`
           const expiresAt = new Date(Date.now() + 7 * 86_400_000).toISOString()
-          const firstName = t.name.split(" ")[0]
           const pmName = pmDisplayNameByUser.get(t.user_id)
           const pmFirst = pmName ? pmName.split(" ")[0] : null
           const from = pmFirst ? `your property manager ${pmFirst}` : "your property manager"
-          const smsBody = includesNextMonth
-            ? `Hi ${firstName}, ${from} is offering to split your $${totalAmount.toLocaleString()} balance (past due + upcoming rent) into up to ${maxInstallments} payments. Choose your plan: ${offerUrl} Reply STOP to opt out.`
-            : `Hi ${firstName}, ${from} is offering to split your $${totalAmount.toLocaleString()} past-due balance into installments. Choose your plan: ${offerUrl} Reply STOP to opt out.`
+          const smsBody = splitPayOfferSms(
+            tenantProfile, firstName, totalAmount, maxInstallments, offerUrl,
+            risk.days_past_due, includesNextMonth, from
+          )
           const offerSnapshot = {
             ...snapshot,
             offer_token: offerToken,
             total_amount: totalAmount,
             max_installments: maxInstallments,
             min_installments: 2,
+            installment_window_days: profileCfg.plan_installment_window_days,
             includes_next_month: includesNextMonth,
             rent_due_day: rentDueDay,
             expires_at: expiresAt,
+            profile: tenantProfile,
           }
           await sendAndLog(supabase, t, "split_pay_offer", smsBody, offerSnapshot, autoMode, results)
           results.installment_offers++
@@ -481,20 +786,13 @@ export async function GET(req: NextRequest) {
           }
         }
       } else {
-        // No Stripe — plain balance reminder
-        const alreadySent = await recentlySent(supabase, t.id, "current_balance_reminder", 14)
+        // No Stripe — plain balance reminder (profile-aware tone)
+        const alreadySent = await recentlySent(supabase, t.id, "current_balance_reminder", profileCfg.dedup_days)
         if (alreadySent) {
           results.skipped_dedup++
         } else {
-          const firstName = t.name.split(" ")[0]
-          const dayText = risk.days_past_due > 0
-            ? ` is ${risk.days_past_due} day${risk.days_past_due === 1 ? "" : "s"} past due`
-            : " is still outstanding"
-          await sendAndLog(
-            supabase, t, "current_balance_reminder",
-            `Hi ${firstName}, your balance of $${(t.balance_due ?? 0).toLocaleString()}${dayText}. Please contact your property manager or reply here to arrange payment. Reply STOP to opt out.`,
-            snapshot, autoMode, results
-          )
+          const smsBody = balanceReminderSms(tenantProfile, firstName, t.balance_due ?? 0, risk.days_past_due)
+          await sendAndLog(supabase, t, "current_balance_reminder", smsBody, { ...snapshot, profile: tenantProfile }, autoMode, results)
         }
       }
       continue
@@ -508,14 +806,12 @@ export async function GET(req: NextRequest) {
     ) {
       triggered = true
       results.evaluated++
-      const alreadySent = await recentlySent(supabase, t.id, "proactive_reminder", 14)
+      const alreadySent = await recentlySent(supabase, t.id, "proactive_reminder", profileCfg.dedup_days)
       if (alreadySent) {
         results.skipped_dedup++
       } else {
-        const msg = untilDue <= 1
-          ? `Hi ${t.name}, rent is due ${untilDue === 0 ? "today" : "tomorrow"}. Based on your payment history, we want to make sure you're all set. Contact your property manager if you have any questions. Reply STOP to opt out.`
-          : `Hi ${t.name}, rent is due in ${untilDue} days. Based on your payment history, we're reaching out early to give you time to prepare. Contact your property manager with any questions. Reply STOP to opt out.`
-        await sendAndLog(supabase, t, "proactive_reminder", msg, snapshot, autoMode, results)
+        const msg = proactiveReminderSms(tenantProfile, firstName, t.rent_amount ?? 0, untilDue, dueDayOfMonth)
+        await sendAndLog(supabase, t, "proactive_reminder", msg, { ...snapshot, profile: tenantProfile }, autoMode, results)
       }
     }
 
@@ -563,15 +859,12 @@ export async function GET(req: NextRequest) {
     if (hasBalance && untilDue <= 7 && !pmConfirmPending) {
       triggered = true
       results.evaluated++
-      const alreadySent = await recentlySent(supabase, t.id, "pre_due_delinquent_warning", 14)
+      const alreadySent = await recentlySent(supabase, t.id, "pre_due_delinquent_warning", profileCfg.dedup_days)
       if (alreadySent) {
         results.skipped_dedup++
       } else {
-        await sendAndLog(
-          supabase, t, "pre_due_delinquent_warning",
-          `Hi ${t.name}, you currently have a balance of $${(t.balance_due ?? 0).toLocaleString()} and rent of $${(t.rent_amount ?? 0).toLocaleString()} is due in ${untilDue} day${untilDue === 1 ? "" : "s"}. Please contact your property manager immediately to avoid further action. Reply STOP to opt out.`,
-          snapshot, autoMode, results
-        )
+        const smsBody = preDueDelinquentWarningSms(tenantProfile, firstName, t.balance_due ?? 0, t.rent_amount ?? 0, untilDue)
+        await sendAndLog(supabase, t, "pre_due_delinquent_warning", smsBody, { ...snapshot, profile: tenantProfile }, autoMode, results)
       }
     }
 
@@ -588,14 +881,12 @@ export async function GET(req: NextRequest) {
     ) {
       triggered = true
       results.evaluated++
-      const alreadySent = await recentlySent(supabase, t.id, "pre_due_urgent", 14)
+      const alreadySent = await recentlySent(supabase, t.id, "pre_due_urgent", profileCfg.dedup_days)
       if (alreadySent) {
         results.skipped_dedup++
       } else {
-        const urgentMsg = untilDue === 0
-          ? `Hi ${t.name}, rent is due today. Please pay as soon as possible to avoid a late fee. Contact your property manager if you need help. Reply STOP to opt out.`
-          : `Hi ${t.name}, rent is due tomorrow. Please make sure your payment is ready to avoid a late fee. Reply STOP to opt out.`
-        await sendAndLog(supabase, t, "pre_due_urgent", urgentMsg, snapshot, autoMode, results)
+        const urgentMsg = preDueUrgentSms(tenantProfile, firstName, untilDue)
+        await sendAndLog(supabase, t, "pre_due_urgent", urgentMsg, { ...snapshot, profile: tenantProfile }, autoMode, results)
       }
     }
 
@@ -652,7 +943,7 @@ export async function GET(req: NextRequest) {
         const half = Math.round(rentAmount / 2 * 100) / 100
         const secondAmount = Math.round((rentAmount - half) * 100) / 100
         const secondDate = new Date()
-        secondDate.setDate(secondDate.getDate() + 14)
+        secondDate.setDate(secondDate.getDate() + profileCfg.plan_installment_window_days)
         const secondDateStr = secondDate.toISOString().split("T")[0]
 
         const offerToken = generateShortCode()
@@ -710,6 +1001,37 @@ export async function GET(req: NextRequest) {
 
     if (pmConfirmPending && hasBalance && !triggered) results.skipped_awaiting_pm++
     if (!triggered) results.skipped_no_trigger++
+  }
+
+  // ── Send batch approval links ─────────────────────────────────────────────
+  // One SMS per PM with a link to /approve/[token] where they can Send or Skip
+  // each queued follow-up/escalation individually. Much cleaner than one SMS per tenant.
+  for (const [userId, batchData] of pendingApprovals) {
+    if (batchData.items.length === 0) continue
+    const batchToken = generateShortCode()
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+    const items = batchData.items.map((item, i) => ({ ...item, index: i }))
+    const count = items.length
+    const approveUrl = `${process.env.NEXT_PUBLIC_APP_URL}/approve/${batchToken}`
+    try {
+      await supabase.from("interventions").insert({
+        tenant_id: items[0].tenantId,
+        user_id: userId,
+        type: "pm_batch_approval_pending",
+        status: "pending",
+        sent_at: new Date().toISOString(),
+        snapshot: { token: batchToken, items, expires_at: expiresAt },
+      })
+      await twilioClient.messages.create({
+        from: FROM_NUMBER,
+        to: batchData.pmPhone,
+        body: `RentSentry: ${count} follow-up${count > 1 ? 's' : ''} ready to send. Review & approve: ${approveUrl}`,
+      })
+      results.batch_approvals_sent++
+    } catch (e) {
+      console.error(`cron: batch approval SMS failed — user ${userId}:`, e)
+      results.errors++
+    }
   }
 
   return NextResponse.json({

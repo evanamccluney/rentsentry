@@ -42,7 +42,6 @@ export async function POST(req: NextRequest) {
   const amountDollars = tenant.balance_due > 0 ? tenant.balance_due : tenant.rent_amount
   const amountCents = Math.round(amountDollars * 100)
   const feeCents = Math.round(amountCents * FEE_RATE)
-  const totalCents = amountCents + feeCents // tenant pays rent + fee
 
   const session = await stripe.checkout.sessions.create({
     mode: "payment",

@@ -159,8 +159,9 @@ async function alreadySentAttorneyHandoff(supabase: any, tenantId: string): Prom
 // ── Main ───────────────────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
-  const secret = req.headers.get("x-cron-secret") ?? req.nextUrl.searchParams.get("secret")
-  if (secret !== process.env.CRON_SECRET) {
+  const authHeader = req.headers.get("authorization")
+  const querySecret = req.nextUrl.searchParams.get("secret")
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}` && querySecret !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
@@ -184,9 +185,12 @@ export async function GET(req: NextRequest) {
 
   // ── Day 0 reminders — fires on the actual due date if balance still owed ──────
   const profileCache: Record<string, { auto_mode: boolean; late_fee_day: number } | null> = {}
+  const todayStr = new Date().toISOString().split("T")[0]
   const dueToday = tenants.filter(t => {
     const manualIntakeHold = t.intake_action === "manual_review" || t.intake_action === "no_contact"
-    return (!manualIntakeHold || (t.auto_contact_approved ?? true)) && daysPastDue(t.last_payment_date, t.rent_due_day ?? 1, t.delinquency_start_date) === 0
+    if (manualIntakeHold && !(t.auto_contact_approved ?? true)) return false
+    if (t.last_payment_date === todayStr) return false // already paid today
+    return daysPastDue(t.last_payment_date, t.rent_due_day ?? 1, t.delinquency_start_date) === 0
   })
 
   for (const t of dueToday) {
@@ -381,26 +385,41 @@ export async function GET(req: NextRequest) {
         totalAlerts++
       }
 
-      // Tenant overdue warning SMS — fires at paymentPlanDay threshold, once per month
+      // Tenant overdue warning SMS — fires at paymentPlanDay threshold, once per month.
+      // Skipped if the automation cron is already managing this tenant's follow-up sequence
+      // (plan offer sent, follow-up pending, or escalation already sent) to prevent double-texting.
       if (autoMode && days >= escalationRules.paymentPlanDay && t.phone && !t.sms_opted_out) {
         const warned = await alreadySentOverdueWarning(supabase, t.id)
         if (!warned) {
-          const phone = normalizePhone(t.phone)
-          if (phone) {
-            try {
-              const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
-              const body = `Hi ${t.name.split(" ")[0]}, your rent is ${days} days past due — $${(t.balance_due ?? 0).toLocaleString()} owed. Reply to this message to arrange payment or set up a plan. Reply STOP to opt out.`
-              await twilioClient.messages.create({ from: FROM_NUMBER, to: phone, body })
-              await supabase.from("interventions").insert({
-                tenant_id: t.id,
-                user_id: userId,
-                type: "overdue_warning",
-                status: "sent",
-                sent_at: new Date().toISOString(),
-                notes: `Overdue warning SMS — ${days} days past due, $${t.balance_due} balance`,
-              })
-              totalTenantSms++
-            } catch (e) { console.error(`phase2 overdue-warning SMS failed — tenant ${t.id}:`, e) }
+          const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
+          const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString()
+          const { data: autoManaged } = await supabase
+            .from("interventions")
+            .select("id")
+            .eq("tenant_id", t.id)
+            .in("type", ["plan_followup", "plan_escalation", "split_pay_offer", "pre_due_installment_offer", "plan_offer_followup"])
+            .or(`sent_at.gte.${monthStart},sent_at.gte.${sevenDaysAgo}`)
+            .limit(1)
+          const automationIsManaging = (autoManaged?.length ?? 0) > 0
+
+          if (!automationIsManaging) {
+            const phone = normalizePhone(t.phone)
+            if (phone) {
+              try {
+                const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
+                const body = `Hi ${t.name.split(" ")[0]}, your rent is ${days} days past due — $${(t.balance_due ?? 0).toLocaleString()} owed. Reply to this message to arrange payment or set up a plan. Reply STOP to opt out.`
+                await twilioClient.messages.create({ from: FROM_NUMBER, to: phone, body })
+                await supabase.from("interventions").insert({
+                  tenant_id: t.id,
+                  user_id: userId,
+                  type: "overdue_warning",
+                  status: "sent",
+                  sent_at: new Date().toISOString(),
+                  notes: `Overdue warning SMS — ${days} days past due, $${t.balance_due} balance`,
+                })
+                totalTenantSms++
+              } catch (e) { console.error(`phase2 overdue-warning SMS failed — tenant ${t.id}:`, e) }
+            }
           }
         }
       }
@@ -435,7 +454,7 @@ export async function GET(req: NextRequest) {
                   await twilioClient.messages.create({
                     from: FROM_NUMBER,
                     to: pmPhone,
-                    body: `RentSentry: ${t.name} (Unit ${t.unit}) — $${(t.balance_due ?? 0).toLocaleString()} outstanding, ${days} days past due, no logged contact in ${daysSinceInt} days. Suggested next step: ${nextStep}. Have you been in touch? Reply YES, NO, or SNOOZE.`,
+                    body: `RentSentry: ${t.name}${t.unit ? ` (Unit ${t.unit})` : ""} — $${(t.balance_due ?? 0).toLocaleString()} outstanding, ${days} days past due, no logged contact in ${daysSinceInt} days. Suggested next step: ${nextStep}. Have you been in touch? Reply YES, NO, or SNOOZE.`,
                   })
                   await supabase.from("interventions").insert({
                     tenant_id: t.id,
@@ -567,7 +586,7 @@ export async function GET(req: NextRequest) {
                   await twilioClient.messages.create({
                     from: FROM_NUMBER,
                     to: pmPhone,
-                    body: `RentSentry: ${missedTenant.name} (Unit ${missedTenant.unit}) missed installment ${i + 1} of $${missed.amount.toLocaleString()} — due ${missed.due_date}. Follow up directly or convert to Pay or Quit notice. ${process.env.NEXT_PUBLIC_APP_URL}/dashboard/tenants/${tenantId}`,
+                    body: `RentSentry: ${missedTenant.name} (Unit ${missedTenant.unit}) missed installment ${i + 1} of $${missed.amount.toLocaleString()} — due ${missed.due_date}. Follow up directly or convert to Pay or Quit notice. View dashboard: ${process.env.NEXT_PUBLIC_APP_URL}/dashboard/tenants`,
                   })
                 } catch (e) { console.error(`phase2 installment-missed PM SMS failed — tenant ${tenantId}:`, e) }
               }
@@ -772,10 +791,9 @@ export async function GET(req: NextRequest) {
           if (sorted.length === 1) {
             const { tenant, days, context } = sorted[0]
             singleTenant = sorted[0]
-            smsBody = `RentSentry: ${tenant.name} (Unit ${tenant.unit}) — Day ${days}, $${(tenant.balance_due ?? 0).toLocaleString()} owed. ${context.suggestion}\nReply: LINK · PLAN · SNOOZE`
+            smsBody = `RentSentry: ${tenant.name} (Unit ${tenant.unit}) — Day ${days}, $${(tenant.balance_due ?? 0).toLocaleString()} owed. ${context.suggestion} View dashboard: ${process.env.NEXT_PUBLIC_APP_URL}/dashboard/tenants`
           } else {
-            const lines = sorted.map(({ tenant, days }) => `${tenant.name.split(" ")[0]} Day ${days} $${(tenant.balance_due ?? 0).toLocaleString()}`).join(" · ")
-            smsBody = `RentSentry: ${sorted.length} tenants need action — ${lines}. Full details in your email or dashboard.`
+            smsBody = `RentSentry: ${sorted.length} tenants need attention. Full details in your email — view dashboard: ${process.env.NEXT_PUBLIC_APP_URL}/dashboard/tenants`
           }
           try {
             const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
